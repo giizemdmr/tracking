@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+.vs/
+
+# Traffic tracking specific data
+data/*.mp4
+data/*.avi
+data/*.mkv
+models/*.engine
+models/*.pt
+models/*.onnx
+reports/*.csv
+*.log

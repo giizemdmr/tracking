@@ -1,0 +1,9 @@
+Yaya
+Bisiklet
+Motosiklet
+Otomobil
+Otobus
+Agir_tasit
+Panelvan
+Minibus
+Kamyonet

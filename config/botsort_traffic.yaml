@@ -1,0 +1,19 @@
+# BoT-SORT Tracker Configuration for Traffic Analysis
+# Based on ultralytics 8.4.35 default botsort.yaml with tuned values
+
+tracker_type: botsort  # tracker type: botsort or bytetrack
+track_high_thresh: 0.35  # lowered to associate faster moving targets
+track_low_thresh: 0.1  # threshold for the second association
+new_track_thresh: 0.6  # threshold for init new track if no match
+track_buffer: 90  # buffer increased to handle skipped frames securely
+match_thresh: 0.95  # CRITICAL: increased from 0.8 to 0.95 allowing association of boxes that moved further
+fuse_score: True  # fuse detection confidence into matching cost
+
+# BoT-SORT specific parameters
+gmc_method: none  # camera motion compensation: sparseOptFlow|orb|sift|ecc|none (fixed camera = none)
+
+# ReID model related
+proximity_thresh: 0.5  # min IoU for ReID consideration
+appearance_thresh: 0.25  # min appearance similarity for ReID
+with_reid: False  # disable ReID for TensorRT engine compatibility
+model: auto  # ReID model path (auto = use detector features)
