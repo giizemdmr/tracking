@@ -1,48 +1,37 @@
 """
-reporting.py - Profesyonel Trafik Raporlama Modülü
-
-Bu modül, araçların bölgeler (zone) arasındaki hareketlerini takip eder,
-en doğru araç tipini belirler ve sonuçları Excel formatında dışa aktarır.
+reporting.py - Raporlama ve Analiz Modülü
+Bu modül, araçların bölgeler arası geçişlerini takip eder ve Excel raporu oluşturur.
+D:\\report_generator.py referans alinarak yazilmistir.
 """
 
-import json
 import cv2
 import numpy as np
+import json
 import openpyxl
 from openpyxl.styles import Font, PatternFill
 from datetime import datetime
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Dict, Set
+from typing import List, Dict, Any, Tuple, Optional
+import os
 
-@dataclass
-class VehicleRoute:
-    """Tamamlanmış bir araç rotasını temsil eder."""
-    object_id: int
-    vehicle_type: str
-    entry_zone: str
-    exit_zone: str
-    full_route: List[str]
 
-    def get_route_string(self) -> str:
-        return " -> ".join(self.full_route)
-
-    def get_report(self) -> str:
-        return f"ID:{self.object_id} | {self.vehicle_type} | {self.entry_zone} -> {self.exit_zone}"
 
 class RegionManager:
-    """Bölge tanımlarını yönetir ve nokta kontrolü yapar."""
-    def __init__(self, regions_file: str):
-        self.regions_file = regions_file
-        self.polygons: List[np.ndarray] = []
-        self.names: List[str] = []
+    """JSON dosyasından bölgeleri yükler ve nokta kontrolü yapar."""
+    def __init__(self, config):
+        self.config = config
+        self.polygons = []
+        self.names = []
         self._load_regions()
 
     def _load_regions(self) -> None:
+        if not os.path.exists(self.config.regions_file):
+            print(f"[ERROR] Bolge dosyasi bulunamadi: {self.config.regions_file}")
+            return
+            
         try:
-            with open(self.regions_file, 'r', encoding='utf-8') as f:
+            with open(self.config.regions_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            # bolgeler.json formatına göre (PalyeTracking_Test formatı)
             polys = data.get("polygons", [])
             names = data.get("names", [])
             
@@ -50,145 +39,285 @@ class RegionManager:
                 self.polygons.append(np.array(p, np.int32))
                 self.names.append(n)
             
-            print(f"[OK] {len(self.polygons)} bolge '{self.regions_file}' dosyasindan yuklendi.")
+            print(f"[OK] {len(self.polygons)} bolge '{self.config.regions_file}' dosyasindan yuklendi.")
         except Exception as e:
-            print(f"[ERROR] Bolge yukleme hatasi: {e}")
+            print(f"[ERROR] Bolgeler yuklenirken hata: {e}")
 
     def point_in_region(self, point: Tuple[int, int]) -> Optional[str]:
+        """Verilen noktanın hangi bölgede olduğunu döndürür."""
         for i, poly in enumerate(self.polygons):
-            if cv2.pointPolygonTest(poly, point, False) >= 0:
+            if cv2.pointPolygonTest(poly, (float(point[0]), float(point[1])), False) >= 0:
                 return self.names[i]
         return None
 
+class VehicleRoute:
+    """Bir aracın izlediği rota bilgilerini tutar."""
+    def __init__(self, object_id: int):
+        self.object_id = object_id
+        self.vehicle_type = "Bilinmiyor"
+        self.route = []  # Bölge isimleri listesi
+        self.start_time = datetime.now()
+        self.last_update = datetime.now()
+        self.entry_zone = None
+        self.exit_zone = None
+        self.is_completed = False
+        
+    def add_zone(self, zone_name: str) -> bool:
+        """Yeni bir bölge ekler, eğer ardışık değilse."""
+        if not self.route or self.route[-1] != zone_name:
+            self.route.append(zone_name)
+            self.last_update = datetime.now()
+            if len(self.route) == 1:
+                self.entry_zone = zone_name
+            return True
+        return False
+
+    def complete(self) -> bool:
+        """Rotayı tamamlar (En az 2 farklı bölge geçilmişse gecerlidir)."""
+        if len(self.route) >= 2:
+            self.entry_zone = self.route[0]
+            self.exit_zone = self.route[-1]
+            self.is_completed = True
+            return True
+        return False
+
+    def get_report(self) -> str:
+        """Excel ve konsol için rapor metni üretir."""
+        return f"{self.object_id} idli {self.vehicle_type} {self.entry_zone} ten girdi {self.exit_zone} ten cikti"
+
+    def get_route_string(self) -> str:
+        """Tam rotayı string olarak döndürür."""
+        return " → ".join(self.route)
+
 class VehicleTracker:
-    """Araç lifecycle ve rota takibi yapar."""
-    def __init__(self):
-        self.routes: Dict[int, List[str]] = {}
-        self.route_timestamps: Dict[int, List[int]] = {}
-        self.type_scores: Dict[int, Dict[str, float]] = {}
-        self.consecutive_frames: Dict[int, int] = {}
-        self.last_seen_zone: Dict[int, Optional[str]] = {}
-        self.last_seen_frame: Dict[int, int] = {}
-        self.processed_ids: Set[int] = set()
+    """Tüm araçların ömür döngüsünü ve bölge geçişlerini yönetir."""
+    def __init__(self, config):
+        self.config = config
+        self.active_vehicles: Dict[int, VehicleRoute] = {}
+        self.type_stats: Dict[int, Dict[str, float]] = {} # ID -> {type: total_conf}
 
-        # Ayarlar (Config'den devralınan mantık)
-        self.zone_entry_frames = 3
-        self.zone_change_frames = 5
-        self.min_route_zone_duration = 15
+    def update_zone(self, object_id: int, zone_name: Optional[str]) -> None:
+        if zone_name is None:
+            return
+            
+        if object_id not in self.active_vehicles:
+            self.active_vehicles[object_id] = VehicleRoute(object_id)
+            
+        self.active_vehicles[object_id].add_zone(zone_name)
 
-    def update_type_score(self, object_id: int, v_type: str, confidence: float):
-        if object_id not in self.type_scores:
-            self.type_scores[object_id] = {}
-        self.type_scores[object_id][v_type] = self.type_scores[object_id].get(v_type, 0.0) + confidence
+    def update_type_score(self, object_id: int, vehicle_type: str, confidence: float) -> None:
+        """En güvenilir araç tipini belirlemek için %70 üzeri skorları toplayarak hesap tutar."""
+        if object_id not in self.type_stats:
+            self.type_stats[object_id] = {'high_conf': {}, 'all': {}}
+            
+        # 1. Eger confidence %70 üzerinde ise, bu gercek ve kaliteli bir despıt tespittir.
+        # Formul geregi: Toplam Skor = Frame Sayisi x Confidence degerlerinin kümülatif toplamı
+        if confidence >= 0.70:
+            self.type_stats[object_id]['high_conf'][vehicle_type] = self.type_stats[object_id]['high_conf'].get(vehicle_type, 0) + confidence
+        
+        # 2. Her ihtimale karsi (hicbiri 0.70 uzeri cikmazsa fallback icin) normal listeyi de tut
+        self.type_stats[object_id]['all'][vehicle_type] = self.type_stats[object_id]['all'].get(vehicle_type, 0) + confidence
 
     def get_best_type(self, object_id: int) -> str:
-        if object_id in self.type_scores and self.type_scores[object_id]:
-            return max(self.type_scores[object_id], key=self.type_scores[object_id].get)
-        return "Unknown"
-
-    def update_zone(self, object_id: int, zone: Optional[str], frame_count: int):
-        if object_id not in self.routes:
-            self.routes[object_id] = []
-            self.route_timestamps[object_id] = []
-            self.consecutive_frames[object_id] = 0
-            self.last_seen_zone[object_id] = None
-        
-        self.last_seen_frame[object_id] = frame_count
-
-        if zone is None:
-            self.consecutive_frames[object_id] = 0
-            return
-
-        if zone == self.last_seen_zone[object_id]:
-            self.consecutive_frames[object_id] += 1
-        else:
-            self.consecutive_frames[object_id] = 1
-            self.last_seen_zone[object_id] = zone
-
-        required = self.zone_entry_frames if not self.routes[object_id] else self.zone_change_frames
-        if self.consecutive_frames[object_id] >= required:
-            if not self.routes[object_id] or self.routes[object_id][-1] != zone:
-                self.routes[object_id].append(zone)
-                self.route_timestamps[object_id].append(frame_count)
-
-    def get_completed_routes(self, active_ids: List[int]) -> List[VehicleRoute]:
-        completed = []
-        for v_id in list(self.routes.keys()):
-            if v_id not in active_ids and v_id not in self.processed_ids:
-                route = self.routes[v_id]
-                # Temizleme (Transit geçişleri eleme)
-                clean_route = self._clean_route(v_id)
+        """Önce %70 üzeri kesin kayıtlara bakar, en yüksek toplam skoru alana galibiyeti verir."""
+        if object_id in self.type_stats:
+            high_scores = self.type_stats[object_id]['high_conf']
+            fallback_scores = self.type_stats[object_id]['all']
+            
+            # Eğer %70 üzeri tek bir tespiti dahi varsa, o gruba ait skor liderini sec!
+            if high_scores:
+                return max(high_scores, key=high_scores.get)
+            # Arac 100 frame boyunca gozuktu ama asla 0.70 skoruna cikamadiysa (sis, karanlik vs)
+            elif fallback_scores:
+                return max(fallback_scores, key=fallback_scores.get)
                 
-                if len(clean_route) >= 2 and clean_route[0] != clean_route[-1]:
-                    completed.append(VehicleRoute(
-                        object_id=v_id,
-                        vehicle_type=self.get_best_type(v_id),
-                        entry_zone=clean_route[0],
-                        exit_zone=clean_route[-1],
-                        full_route=clean_route
-                    ))
-                    self.processed_ids.add(v_id)
+        return "Bilinmiyor"
+
+    def get_completed_routes(self, current_active_ids: List[int]) -> List[VehicleRoute]:
+        """Ekrandan kaybolan araçların rotalarını döndürür ve temizler."""
+        completed = []
+        ids_to_remove = []
+        
+        for tid, route in self.active_vehicles.items():
+            if tid not in current_active_ids:
+                # Araç artık ekranda değilse
+                if route.complete():
+                    route.vehicle_type = self.get_best_type(tid)
+                    completed.append(route)
+                ids_to_remove.append(tid)
+                
+        for tid in ids_to_remove:
+            if tid in self.active_vehicles: del self.active_vehicles[tid]
+            if tid in self.type_stats: del self.type_stats[tid]
+            
         return completed
 
-    def _clean_route(self, v_id: int) -> List[str]:
-        route = self.routes[v_id]
-        ts = self.route_timestamps[v_id]
-        if len(route) < 3: return route
-        
-        cleaned = [route[0]]
-        for i in range(1, len(route)-1):
-            duration = ts[i+1] - ts[i]
-            if duration >= self.min_route_zone_duration:
-                cleaned.append(route[i])
-        cleaned.append(route[-1])
-        
-        # Ardışık tekrarları sil
-        final = [cleaned[0]]
-        for z in cleaned[1:]:
-            if z != final[-1]: final.append(z)
-        return final
 
 class ReportGenerator:
-    """Excel raporlarını oluşturur."""
-    def __init__(self, filename: str):
-        self.filename = filename
-        self.records = []
-
-    def add_route(self, route: VehicleRoute):
+    """
+    Trafik analiz raporlarını Excel formatında oluşturur.
+    
+    Araç geçişlerini kaydeder ve Excel dosyasına yazar.
+    D:\\report_generator.py mantığı birebir uygulanmıştır.
+    
+    Attributes:
+        config: Uygulama konfigürasyonu
+        records: Rapor kayıtları listesi
+    """
+    
+    def __init__(self, config):
+        """
+        ReportGenerator başlatıcısı.
+        
+        Args:
+            config: Uygulama konfigürasyonu
+        """
+        self.config = config
+        self.records: List[List] = []
+    
+    def add_route(self, route: 'VehicleRoute') -> None:
+        """
+        Tamamlanmış bir rota ekler.
+        
+        Args:
+            route: VehicleRoute nesnesi
+        """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        report_text = route.get_report()
+        route_string = route.get_route_string()
+        
         record = [
             timestamp,
-            route.get_report(),
+            report_text,
             route.object_id,
             route.vehicle_type,
             route.entry_zone,
             route.exit_zone,
-            route.get_route_string()
+            route_string
         ]
+        
+        self.records.append(record)
+    
+    def add_record(
+        self,
+        object_id: int,
+        vehicle_type: str,
+        entry_zone: str,
+        exit_zone: str,
+        full_route: List[str]
+    ) -> None:
+        """
+        Manuel olarak kayıt ekler.
+        
+        Args:
+            object_id: Araç ID'si
+            vehicle_type: Araç tipi
+            entry_zone: Giriş bölgesi
+            exit_zone: Çıkış bölgesi
+            full_route: Tam rota listesi
+        """
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        route_string = " → ".join(full_route)
+        report_text = f"{object_id} idli {vehicle_type} {entry_zone} ten girdi {exit_zone} ten cikti"
+        
+        record = [
+            timestamp,
+            report_text,
+            object_id,
+            vehicle_type,
+            entry_zone,
+            exit_zone,
+            route_string
+        ]
+        
         self.records.append(record)
 
-    def save(self):
-        if not self.records:
-            print("[INFO] Raporlanacak veri yok.")
-            return
+    def get_record_count(self) -> int:
+        """Kayıt sayısını döndürür."""
+        return len(self.records)
+    
+    def save(self) -> bool:
+        """
+        Raporu Excel dosyasına kaydeder.
+        
+        Returns:
+            True eğer başarılı, False eğer hata oluşursa
+        """
+        print("\n[INFO] Excel raporu olusturuluyor...")
         
         try:
             wb = openpyxl.Workbook()
             ws = wb.active
             ws.title = "Trafik Raporu"
             
-            headers = ["Tarih/Saat", "Olay", "ID", "Tür", "Giriş", "Çıkış", "Tam Rota"]
+            # Başlıklar
+            headers = [
+                "Tarih/Saat",
+                "Olay Raporu",
+                "ID",
+                "Tür",
+                "Giriş",
+                "Çıkış",
+                "Tam Rota"
+            ]
             ws.append(headers)
             
-            # Stil
+            # Başlık stili
+            header_font = Font(bold=True)
+            header_fill = PatternFill(
+                start_color="FFFF00",
+                end_color="FFFF00",
+                fill_type="solid"
+            )
+            
             for cell in ws[1]:
-                cell.font = Font(bold=True)
-                cell.fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+                cell.font = header_font
+                cell.fill = header_fill
             
-            for r in self.records:
-                ws.append(r)
+            # Veri satırları
+            for record in self.records:
+                ws.append(record)
             
-            wb.save(self.filename)
-            print(f"[OK] Rapor kaydedildi: {self.filename} ({len(self.records)} kayit)")
+            # Sütun genişlikleri
+            ws.column_dimensions['A'].width = 20
+            ws.column_dimensions['B'].width = 60
+            ws.column_dimensions['C'].width = 8
+            ws.column_dimensions['D'].width = 15
+            ws.column_dimensions['E'].width = 10
+            ws.column_dimensions['F'].width = 10
+            ws.column_dimensions['G'].width = 30
+            
+            # Kaydet
+            wb.save(self.config.excel_filename)
+            print(f"[OK] {len(self.records)} kayit yazildi: {self.config.excel_filename}")
+            
+            return True
+            
+        except PermissionError:
+            print(f"[ERROR] Dosya erisim hatasi: {self.config.excel_filename}")
+            print("   Dosya baska bir program tarafindan acik olabilir.")
+            return False
+            
         except Exception as e:
-            print(f"[ERROR] Excel kayit hatasi: {e}")
+            print(f"[ERROR] Excel hatasi: {e}")
+            return False
+    
+    def print_statistics(self, frame_count: int, vehicle_count: int = 0) -> None:
+        """
+        İstatistikleri konsola yazdırır.
+        
+        Args:
+            frame_count: Toplam frame sayısı
+            vehicle_count: Tespit edilen toplam araç sayısı
+        """
+        print("\n" + "=" * 60)
+        print("[STATS] ISTATISTIKLER")
+        print("=" * 60)
+        print(f"Toplam Frame: {frame_count}")
+        print(f"Tespit Edilen Araç: {vehicle_count}")
+        print(f"Raporlanan Geçiş: {len(self.records)}")
+        print("=" * 60)
+    
+    def clear(self) -> None:
+        """Tüm kayıtları temizler."""
+        self.records.clear()

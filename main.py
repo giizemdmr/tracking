@@ -1,64 +1,81 @@
-"""
-main.py - Canli Izleme Özellikli Asenkron YOLOv8 + BoT-SORT Pipeline
-
-Hardcoded (Sabit) Parametreler:
-- Video: D:\tracking\data\traffic_video.mp4
-- Model: D:\tracking\models\yolov8.engine
-- Proje İçi Sınıflar (Yaya, Bisiklet vs.)
-
-Durdurmak için canlı izleme penceresi açıkken 'q' tuşuna basmanız yeterlidir. Bütün
-arkaplan işlemleri asenkron olarak güvenli şekilde temizlenecektir (No Memory Leaks).
-"""
-
 import cv2
 import threading
 import queue
-import numpy as np
 import time
+import os
+import yaml
+import numpy as np
+from types import SimpleNamespace
 from typing import Optional, Tuple, Any
+from PIL import Image, ImageDraw, ImageFont
 from ultralytics import YOLO
+
 from src.reporting import RegionManager, VehicleTracker, ReportGenerator
 
-# ----- KULLANICI PARAMETRELERİ ----- #
-VIDEO_SOURCE = r"D:\avm.mp4"
-MODEL_WEIGHTS = r"D:\tracking\models\yolov8.engine"
-OUTPUT_VIDEO = r"D:\tracking\data\output_live.mp4"
-
-# Kullanıcının tanımladığı tam sınıf isimleri
-CLASS_NAMES = {
-    0: "Yaya",
-    1: "Bisiklet",
-    2: "Motosiklet",
-    3: "Otomobil",
-    4: "Otobus",
-    5: "Agir_tasit",
-    6: "Panelvan",
-    7: "Minibus",
-    8: "Kamyonet"
+# D:\config.py referansindan arac renkleri (BGR)
+VEHICLE_COLORS = {
+    "yaya": (128, 128, 128),
+    "bisiklet": (255, 255, 0),
+    "motosiklet": (255, 0, 255),
+    "otomobil": (0, 255, 0),
+    "minivan": (180, 105, 255),
+    "otobus": (255, 0, 0),
+    "kamyon": (0, 0, 255),
+    "tir": (0, 0, 180),
+    "pikap": (0, 165, 255),
+    "panelvan": (200, 150, 100),
+    "minibus": (0, 255, 255),
+    "kamyonet": (128, 0, 255),
+    "arac": (200, 200, 200),
 }
 
-# Modern ve Estetik BGR Renk Paleti (Sınıflara Özel)
-CLASS_COLORS = {
-    0: (146, 98, 240),   # Yaya - Tatlı Mor
-    1: (247, 195, 79),   # Bisiklet - Gök Mavisi/Turkuazımsı
-    2: (77, 183, 255),   # Motosiklet - Turuncu
-    3: (132, 199, 129),  # Otomobil - Fıstık Yeşili
-    4: (203, 134, 121),  # Otobus - Çivit Mavisi (İndigo)
-    5: (115, 115, 229),  # Agir_tasit - Mat Kırmızı
-    6: (225, 208, 77),   # Panelvan - Aqua Mavisi
-    7: (200, 104, 186),  # Minibus - Menekşe (Magenta)
-    8: (118, 241, 255)   # Kamyonet - Koyu Sarımsı
-}
+def get_vehicle_color(vehicle_type: str) -> tuple:
+    """Arac tipine gore BGR renk dondurur."""
+    v_type_lower = vehicle_type.lower()
+    for key, color in VEHICLE_COLORS.items():
+        if key in v_type_lower:
+            return color
+    return VEHICLE_COLORS["arac"]
 
-def get_color(cls_id: int):
-    """Sınıflara özel hazırlanmış estetik BGR renklerini döndürür. Bulunamazsa gri verir."""
-    return CLASS_COLORS.get(cls_id, (128, 128, 128))
-
+def load_config(yaml_path: str) -> SimpleNamespace:
+    """YAML dosyasini okur, D:\\config.py varsayilanlari ile birlestirir."""
+    defaults = {
+        "video_path": "avm.mp4",
+        "model_path": r"D:\tracking\models\yolov8.engine",
+        "regions_file": "bolgeler.json",
+        "excel_filename": "trafik_raporu_yogunburc.xlsx",
+        "headless_mode": False,
+        "skip_frames": 4,
+        "display_scale": 1.0,
+        "confidence_threshold": 0.25,
+        "nms_threshold": 0.70, # Perspektif yığılması icin artirildı (Eski deger: 0.45). Kesisim toleransi yukseltilerek araclari yutmasi engellendi.
+        "input_size": 1024,
+        "use_half": True,
+        "track_thresh": 0.5,
+        "track_buffer": 120,
+        "match_thresh": 0.7,
+        "max_disappeared": 50,
+        "max_distance": 500,
+        "zone_entry_frames": 3,
+        "zone_change_frames": 5,
+        "min_route_zone_duration": 15,
+    }
+    try:
+        with open(yaml_path, 'r', encoding='utf-8') as f:
+            data = yaml.safe_load(f) or {}
+        defaults.update(data)
+        print(f"[OK] Config yuklendi: {yaml_path}")
+    except Exception as e:
+        print(f"[WARN] YAML okunamadi ({e}), varsayilan degerler kullaniliyor.")
+    
+    cfg = SimpleNamespace(**defaults)
+    cfg.get_vehicle_color = get_vehicle_color
+    return cfg
 
 class VideoReader(threading.Thread):
-    def __init__(self, video_path: str, input_queue: queue.Queue, stop_event: threading.Event) -> None:
+    def __init__(self, config, input_queue: queue.Queue, stop_event: threading.Event) -> None:
         super().__init__(name="VideoReaderThread")
-        self.video_path = video_path
+        self.config = config
         self.input_queue: queue.Queue = input_queue
         self.stop_event = stop_event
         self.fps = 30.0
@@ -67,9 +84,9 @@ class VideoReader(threading.Thread):
         self._initialize_video_metadata()
 
     def _initialize_video_metadata(self) -> None:
-        cap = cv2.VideoCapture(self.video_path)
+        cap = cv2.VideoCapture(self.config.video_path)
         if not cap.isOpened():
-            print(f"[!] CRITICAL ERROR: Video dosyasi acilamadi: {self.video_path}")
+            print(f"[!] CRITICAL ERROR: Video dosyasi acilamadi: {self.config.video_path}")
             self.stop_event.set()
             return
         self.fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -79,14 +96,13 @@ class VideoReader(threading.Thread):
 
     def run(self) -> None:
         if self.stop_event.is_set(): return
-        cap = cv2.VideoCapture(self.video_path)
+        cap = cv2.VideoCapture(self.config.video_path)
         try:
             while cap.isOpened() and not self.stop_event.is_set():
                 ret, frame = cap.read()
                 if not ret:
                     break
                 
-                # Timeout ile Queue'ya veri yolla (Böylece stop_event bloke olmadan kontrol edilir)
                 while not self.stop_event.is_set():
                     try:
                         self.input_queue.put(frame, timeout=0.1)
@@ -98,16 +114,15 @@ class VideoReader(threading.Thread):
         finally:
             cap.release()
             try:
-                # Sentinel (Sentinel -> TrackerEngine'in okumayı bitirmesi için Bitiş Sinyali)
                 self.input_queue.put(None, timeout=1) 
             except:
                 pass
 
 
 class TrackerEngine(threading.Thread):
-    def __init__(self, model_path: str, input_queue: queue.Queue, output_queue: queue.Queue, stop_event: threading.Event) -> None:
+    def __init__(self, config, input_queue: queue.Queue, output_queue: queue.Queue, stop_event: threading.Event) -> None:
         super().__init__(name="TrackerEngineThread")
-        self.model_path = model_path
+        self.config = config
         self.input_queue: queue.Queue = input_queue
         self.output_queue: queue.Queue = output_queue
         self.stop_event = stop_event
@@ -115,13 +130,10 @@ class TrackerEngine(threading.Thread):
     def run(self) -> None:
         if self.stop_event.is_set(): return
         try:
-            # Type doğrulayıcı ile TensorRT modunu zorla
-            model = YOLO(self.model_path, task='detect')
+            model = YOLO(self.config.model_path, task='detect')
             
             while not self.stop_event.is_set():
                 frame = None
-                
-                # Asılı (Block) kalmayı önlemek için Time-out ile bekleme
                 while not self.stop_event.is_set():
                     try:
                         frame = self.input_queue.get(timeout=0.1)
@@ -129,29 +141,38 @@ class TrackerEngine(threading.Thread):
                     except queue.Empty:
                         pass
                 
-                # Gelen paket Sentinel (None) ise okuma durmuştur, işlemden çıkılır
                 if frame is None or self.stop_event.is_set():
                     if frame is not None: self.input_queue.task_done()
                     break
                     
-                # FPS / GPU Darboğazı Engelleyen Tracking Ayarları
+                # Botsort parametrelerini direkt YAML'dan okuyoruz
+                # NMS ve Tracker parametreleri optimize sekilde (TRT uzerinden sifir latency islemleri)
                 results = model.track(
                     source=frame, 
                     stream=True, 
                     persist=True, 
-                    half=True, 
+                    half=self.config.use_half, 
                     verbose=False, 
-                    tracker="custom_botsort.yaml",
-                    imgsz=1024
+                    tracker="config/botsort_traffic.yaml", 
+                    imgsz=self.config.input_size,
+                    conf=self.config.confidence_threshold,
+                    iou=self.config.nms_threshold, # Kesisim (Overlap) esnekligi
+                    agnostic_nms=False # OTO, OTOBUS'u yutmasin diye class spesifik kalmali
                 )
                 
                 for result in results:
                     if self.stop_event.is_set(): break
-                    
                     while not self.stop_event.is_set():
                         try:
-                            # Saf Orijinal veri, asla engine tarafından kirletilmemiştir (NO DRAW)
-                            self.output_queue.put((result.orig_img, result.boxes), timeout=0.1)
+                            kalman_states = {}
+                            if hasattr(model, 'predictor') and model.predictor is not None:
+                                if hasattr(model.predictor, 'trackers') and len(model.predictor.trackers) > 0:
+                                    bt_tracker = model.predictor.trackers[0]
+                                    for t in getattr(bt_tracker, 'tracked_stracks', []) + getattr(bt_tracker, 'lost_stracks', []):
+                                        kalman_states[int(t.track_id)] = t.mean[:4].copy()
+                                        
+                            # Model isimlerini ve 8 boyutlu state tabanlarini kuyruk ile gönder
+                            self.output_queue.put((result.orig_img, result.boxes, result.names, kalman_states), timeout=0.1)
                             break
                         except queue.Full:
                             pass
@@ -159,52 +180,63 @@ class TrackerEngine(threading.Thread):
                 self.input_queue.task_done()
                 
         except Exception as e:
-            print(f"\n[TrackerEngine] Modelle Baglantili Kritik Hata (Engine Uyusmazligi / Bozuk CUDA): {e}")
+            print(f"\n[TrackerEngine] Modelle Baglantili Kritik Hata: {e}")
             self.stop_event.set()
         finally:
             try:
-                # ResultProcessor'a Engine'in durduğunu beyan eder (Sentinel Yollar)
-                self.output_queue.put((None, None), timeout=1)
+                self.output_queue.put((None, None, None, None), timeout=1)
             except:
                 pass
 
 
 class ResultProcessor(threading.Thread):
-    def __init__(self, output_path: str, output_queue: queue.Queue, stop_event: threading.Event, fps: float, width: int, height: int) -> None:
+    def __init__(self, config, output_queue: queue.Queue, stop_event: threading.Event, fps: float, width: int, height: int) -> None:
         super().__init__(name="ResultProcessorThread")
-        self.output_path = output_path
+        self.config = config
         self.output_queue: queue.Queue = output_queue
         self.stop_event = stop_event
         self.fps = fps
         self.width = width
         self.height = height
         
-        # FPS Hesaplaması için değişkenler (Yalnızca bu thread'e özel Consumer FPS)
         self.frame_count = 0
+        self.total_processed_frames = 0
         self.start_time = time.time()
         self.current_fps = 0.0
 
-        # Raporlama Bileşenleri
-        self.region_manager = RegionManager("bolgeler.json")
-        self.vehicle_tracker = VehicleTracker()
-        self.report_generator = ReportGenerator("trafik_raporu.xlsx")
+        # Raporlama ve Loglama (Yeni merkezi Config ile)
+        self.region_manager = RegionManager(self.config)
+        self.vehicle_tracker = VehicleTracker(self.config)
+        self.report_generator = ReportGenerator(self.config)
+        self.routes_log = []
+        
+        # Pillow modern font onyukleme
+        try:
+            self.font = ImageFont.truetype("Arial.ttf", 14)
+            self.font_large = ImageFont.truetype("Arial.ttf", 26)
+            self.font_mid = ImageFont.truetype("Arial.ttf", 16)
+        except IOError:
+            self.font = ImageFont.load_default()
+            self.font_large = ImageFont.load_default()
+            self.font_mid = ImageFont.load_default()
 
     def run(self) -> None:
         if self.stop_event.is_set(): return
+        
+        output_name = "data/output_live.mp4"
+        os.makedirs("data", exist_ok=True)
+        
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(self.output_path, fourcc, self.fps, (self.width, self.height))
+        writer = cv2.VideoWriter(output_name, fourcc, self.fps, (self.width, self.height))
         
         cv2.namedWindow("Canli Takip Sonucu", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("Canli Takip Sonucu", 1280, 720)
-
-        if not writer.isOpened():
-            print(f"[ResultProcessor] ERROR: Video writer baslatilamadi, ciktilar sadece izlenebilecek.")
+        display_w = int(1280 * self.config.display_scale)
+        display_h = int(720 * self.config.display_scale)
+        cv2.resizeWindow("Canli Takip Sonucu", display_w, display_h)
 
         try:
             while not self.stop_event.is_set():
                 item = None
-                
-                # Asılı Kalma Yok (No block), Timeout ile Stop Sinyali denetleniyor
                 while not self.stop_event.is_set():
                     try:
                         item = self.output_queue.get(timeout=0.1)
@@ -216,162 +248,190 @@ class ResultProcessor(threading.Thread):
                     if item is not None: self.output_queue.task_done()
                     break
                     
-                frame, boxes = item
+                frame, boxes, model_names, kalman_states = item
                 
-                # Kutu ve ID çizimi
+                # Pillow (PIL) cizimleri icin bos bir RGBA (overlay) katmani olustur
+                overlay = Image.new('RGBA', (self.width, self.height), (0, 0, 0, 0))
+                draw = ImageDraw.Draw(overlay)
+
+                # Cizim islemleri
                 if boxes is not None and boxes.id is not None:
                     coords = boxes.xyxy.cpu().numpy()
                     track_ids = boxes.id.cpu().numpy()
                     class_ids = boxes.cls.cpu().numpy() if boxes.cls is not None else [0] * len(coords)
-                    # Güven Skoru (Threshold) Çekimi
                     confidences = boxes.conf.cpu().numpy() if boxes.conf is not None else [0.0] * len(coords)
                     
                     for coord, track_id, cls_id, conf in zip(coords, track_ids, class_ids, confidences):
                         x1, y1, x2, y2 = map(int, coord)
                         tid = int(track_id)
                         cid = int(cls_id)
+                        class_name = model_names.get(cid, "Arac")
                         
-                        class_name = CLASS_NAMES.get(cid, "Bilinmeyen")
-                        color = get_color(cid) 
+                        # -- Kalman State Rescue (Occlusion Guard) --
+                        cx, cy = (x1 + x2) // 2, y2 
+                        current_h = y2 - y1
                         
-                        # 1. Bounding Box (İnce ve Zarif Sınır Kutusu)
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1, lineType=cv2.LINE_AA)
-                        
-                        # 2. Etiket: #{ID} {Sınıf_Adı} [{Threshold}]
-                        label = f"#{tid} {class_name} [{conf:.2f}]"
-                        
-                        # Font Ayarları
-                        font = cv2.FONT_HERSHEY_SIMPLEX
-                        font_scale = 0.5
-                        thickness = 1
-                        
-                        (text_width, text_height), _ = cv2.getTextSize(label, font, font_scale, thickness)
-                        
-                        # 3. Yazı Arka Planı (Sınıfın renginde dinamik uzunluk)
-                        bg_y1 = max(0, y1 - text_height - 10)
-                        bg_y2 = max(0, y1)
-                        cv2.rectangle(frame, (x1, bg_y1), (x1 + text_width + 6, bg_y2), color, -1)
-                        
-                        # 4. Beyaz net yazı (Okunabilir contrast ve LINE_AA Anti-Aliasing ile)
-                        cv2.putText(frame, label, (x1 + 3, bg_y2 - 4), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+                        if tid in kalman_states:
+                            k_x, k_y, k_a, k_h = kalman_states[tid]
+                            # Eger YOLO kutusu Kalman'in gercek fiziksel boyut beklentisinden aniden %20+ kuculduyse
+                            # (Bir seyin arkasina girip alti kesildiyse) veya Guven skoru ani dustuyse -> KAPANMA VAR!
+                            if current_h < (k_h * 0.80) or conf < 0.40:
+                                # YOLO koordinatlarini COPE AT. 
+                                # Tracker'in hiz ve yon vektorunden(ivme) gelen State ([x, y, a, h]) degerleriyle SANAL 'cy' olustur!
+                                cx = int(k_x)
+                                cy = int(k_y + (k_h / 2))
 
-                        # ------- RAPORLAMA MANTIĞI -------
-                        # Bölge Kontrolü
-                        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                        # Guncellenmis/Korunmus (Rescue) Noktayla Zone Analizini Yap
                         current_zone = self.region_manager.point_in_region((cx, cy))
-                        self.vehicle_tracker.update_zone(tid, current_zone, self.frame_count)
-                        
-                        # Tip Skorlama
+                        self.vehicle_tracker.update_zone(tid, current_zone)
                         self.vehicle_tracker.update_type_score(tid, class_name, float(conf))
 
-                # Tamamlanmış Rotaları Raporla (Her karede aktif ID listesini yolla)
+                        # Eger arac hicbir zoneda degilse ekranda cizme (FPS ve gereksiz kalabalik optimizasyonu)
+                        if current_zone is None:
+                            continue
+                        
+                        # OpenCV BGR rengini RGB'ye cevir (ImageDraw icin)
+                        b, g, r = self.config.get_vehicle_color(class_name)
+                        rgb_color = (r, g, b)
+                        bg_color = (r, g, b, 150) # saydamlik ekli rgb
+                        
+                        # Ince ve zarif bounding box YERINE sadece bottom-center nokta cizimi (Nokta Modu)
+                        # -1 ici dolu, siyah dis cizgiyle modern gorunum
+                        cv2.circle(frame, (cx, cy), 5, (b, g, r), -1, lineType=cv2.LINE_AA)
+                        cv2.circle(frame, (cx, cy), 5, (0, 0, 0), 1, lineType=cv2.LINE_AA)
+                        
+                        # Etiket
+                        label = f"id {tid} {class_name}"
+                        left, top, right, bottom = draw.textbbox((0, 0), label, font=self.font)
+                        tw, th = right - left, bottom - top
+                        
+                        pad_x, pad_y = 6, 4
+                        
+                        # Noktanin uzerine ortalayarak yerlestir (X: merkez, Y: top - bosluk)
+                        text_x = cx - (tw // 2)
+                        text_y = cy - th - 18
+                        
+                        bg_rect = [text_x - pad_x, text_y - pad_y, text_x + tw + pad_x, text_y + th + pad_y]
+                        
+                        draw.rounded_rectangle(bg_rect, radius=5, fill=bg_color)
+                        draw.text((text_x, text_y), label, font=self.font, fill=(255, 255, 255, 255))
+
+                # Rotalari Al ve Logla
                 active_ids = list(track_ids) if (boxes is not None and boxes.id is not None) else []
                 completed_routes = self.vehicle_tracker.get_completed_routes(active_ids)
                 for route in completed_routes:
                     self.report_generator.add_route(route)
-                    print(f"\n[ROTA TAMAMLANDI] {route.get_report()}")
+                    report_item = route.get_report()
+                    print(f"\n[ROTA TAMAMLANDI] {report_item}")
+                    self.routes_log.append(report_item)
+                    if len(self.routes_log) > 5: self.routes_log.pop(0)
 
-                # ------- BÖLGELERİ ÇİZ (Görsel Geri Bildirim) -------
+                # UI Cizimleri (Sag Ust Loglar)
+                for i, log_text in enumerate(reversed(self.routes_log)):
+                    cv2.putText(frame, log_text, (self.width - 500, 50 + (i * 35)), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2, cv2.LINE_AA)
+
+                # Bolgeleri Ciz (Saydam Dolgulu)
+                zone_overlay = frame.copy()
                 for i, poly in enumerate(self.region_manager.polygons):
-                    cv2.polylines(frame, [poly], True, (255, 255, 255), 1, lineType=cv2.LINE_AA)
-                    # Bölge İsmi
-                    try:
-                        M = cv2.moments(poly)
-                        if M['m00'] != 0:
-                            mcx = int(M['m10'] / M['m00'])
-                            mcy = int(M['m01'] / M['m00'])
-                            cv2.putText(frame, self.region_manager.names[i], (mcx, mcy), 
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
-                    except: pass
+                    # Acik sari renk dolgu (BGR: 150, 255, 255)
+                    cv2.fillPoly(zone_overlay, [poly], (150, 255, 255))
+                    cv2.polylines(frame, [poly], True, (0, 255, 255), 1, lineType=cv2.LINE_AA)
+                
+                # Sadece %20 opaklikla saydamlik (arka planin cok net gorunmesi icin)
+                cv2.addWeighted(zone_overlay, 0.20, frame, 0.80, 0, frame)
 
-                # ----------- 3. CONSUMER FPS GÖSTERGESİ -----------
+                for i, poly in enumerate(self.region_manager.polygons):
+                    M = cv2.moments(poly)
+                    if M['m00'] != 0:
+                        mcx, mcy = int(M['m10'] / M['m00']), int(M['m01'] / M['m00'])
+                        # Modern stroke tekniği ile yazım
+                        cv2.putText(frame, f"Zone {self.region_manager.names[i]}", (mcx - 25, mcy), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3, cv2.LINE_AA)
+                        cv2.putText(frame, f"Zone {self.region_manager.names[i]}", (mcx - 25, mcy), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+
+                # FPS Hesaplamasi
                 self.frame_count += 1
+                self.total_processed_frames += 1
                 elapsed = time.time() - self.start_time
                 if elapsed > 1.0:
                     self.current_fps = self.frame_count / elapsed
                     self.frame_count = 0
                     self.start_time = time.time()
-                
-                # Ekranın sol üstüne canlı FPS çizimi
-                fps_text = f"FPS: {self.current_fps:.1f}"
-                cv2.putText(frame, fps_text, (20, 40), cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
 
-                # Kayıt etme
-                if writer.isOpened():
-                    writer.write(frame)
+                # Modern FPS / Threshold Paneli (Pillow ile)
+                fps_str = f"{self.current_fps:.1f} FPS"
+                conf_str = f"Threshold: {self.config.confidence_threshold:.2f}"
                 
-                # ------ CANLI İZLEME (LIVE FEED) ------
+                # Panel arka plani
+                draw.rounded_rectangle([15, 15, 180, 85], radius=8, fill=(0, 0, 0, 180))
+                # Yazilar (Drop shadow hissi ile modern)
+                draw.text((26, 26), fps_str, font=self.font_large, fill=(0, 0, 0, 255))
+                draw.text((25, 25), fps_str, font=self.font_large, fill=(0, 255, 100, 255))
+                
+                draw.text((26, 61), conf_str, font=self.font_mid, fill=(0, 0, 0, 255))
+                draw.text((25, 60), conf_str, font=self.font_mid, fill=(255, 255, 255, 255))
+
+                # Tum OpenCV cizimleri tamamlandiktan sonra resmi PIL'a cevirip overlay'i ekle
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_img = Image.fromarray(rgb_frame).convert('RGBA')
+                pil_img.paste(overlay, (0, 0), overlay)
+                
+                # RGB olarak geri OpenCV'ye dondur
+                frame = cv2.cvtColor(np.array(pil_img.convert('RGB')), cv2.COLOR_RGB2BGR)
+                
+                if writer.isOpened(): writer.write(frame)
                 cv2.imshow("Canli Takip Sonucu", frame)
                 
-                # 1ms bekle, kullanıcı 'q' tuşuna basarsa sistemi acil stopla
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    print("\n[!] 'q' tusuna basildi. Pipeline asenkron olarak durduruluyor...")
+                if cv2.waitKey(1) & 0xFF == ord('q'):
                     self.stop_event.set()
-                    self.output_queue.task_done()
                     break
                 
                 self.output_queue.task_done()
                 
-        except Exception as e:
-            print(f"[ResultProcessor] Render İşlem Hatası: {e}")
-            self.stop_event.set()
         finally:
-            # Video bitince veya durdurulunca raporu kaydet
             self.report_generator.save()
-            if writer.isOpened(): 
-                writer.release()
+            self.report_generator.print_statistics(self.total_processed_frames)
+            if writer.isOpened(): writer.release()
             cv2.destroyAllWindows()
 
 
 def start_pipeline() -> None:
+    # 1. Config Yukle
+    config = load_config("config/botsort_traffic.yaml")
+    
+    # User yollarini koruyalim (D:\avm.mp4 vb.)
+    # Eger YAML'da yoksa veya gecersiz ise varsayilanlari setle
+    if not os.path.exists(config.video_path):
+        config.video_path = r"D:\avm.mp4"
+    if not os.path.exists(config.model_path):
+        config.model_path = r"D:\tracking\models\yolov8.engine"
+
     print("-" * 50)
-    print(f"[INFO] Video Kaynagi: {VIDEO_SOURCE}")
-    print(f"[INFO] Model Engine: {MODEL_WEIGHTS}")
+    print(f"[INFO] Video Kaynagi: {config.video_path}")
+    print(f"[INFO] Model Engine: {config.model_path}")
     print("-" * 50)
     
-    # 1. Thread-Safe Kuyrukları Başlat (Darboğaza karşı 64 kare RAM izni)
     input_queue = queue.Queue(maxsize=64)
     output_queue = queue.Queue(maxsize=64)
-    
-    # Tüm modülleri asekron durdurmak için global event (q ile kapanma)
     stop_event = threading.Event()
     
-    print("\n[+] Sistem Baslatiliyor: Thread Baglantilari Kuruluyor...")
-    reader_thread = VideoReader(VIDEO_SOURCE, input_queue, stop_event)
-    
-    if stop_event.is_set():
-        print("\n[-] Baslatma basarisiz. Lutfen kaynaktaki dosyalarin varligini kontol edin.")
-        return
+    reader_thread = VideoReader(config, input_queue, stop_event)
+    if stop_event.is_set(): return
         
-    fps = reader_thread.fps
-    width = reader_thread.width
-    height = reader_thread.height
-    print(f"|  Video Orijinal Parametreleri: {width}x{height} @ {fps:.2f}FPS")
-    
-    engine_thread = TrackerEngine(MODEL_WEIGHTS, input_queue, output_queue, stop_event)
-    processor_thread = ResultProcessor(OUTPUT_VIDEO, output_queue, stop_event, fps, width, height)
+    engine_thread = TrackerEngine(config, input_queue, output_queue, stop_event)
+    processor_thread = ResultProcessor(config, output_queue, stop_event, reader_thread.fps, reader_thread.width, reader_thread.height)
     
     reader_thread.start()
     engine_thread.start()
     processor_thread.start()
     
-    print("\n>>> Pipeline calisiyor, Canli izleme ekrani aciliyor... <<<")
-    print("      (Durdurmak icin acilan pencere uzerindeyken 'q' tusuna basin)\n")
-    
-    # Thread kilitlenmeleri 'timeout' eklendiği için artık olmayacak.
-    # Güvenli kapanış (Graceful Shutdown) mekanizması ile bekleniyor:
     reader_thread.join()
-    print("[*] (1/3) Kaynak okuma islemi tamamladi/durduruldu.")
-    
     engine_thread.join()
-    print("[*] (2/3) Tracking Neural Engine kapandi.")
-    
     processor_thread.join()
-    print("[*] (3/3) Result Processor Gorsellestirmeyi Kapatti.")
     
-    print(f"\n[OK] Pipeline basariyla kapandi. Cikti videonuz:\n -> {OUTPUT_VIDEO}")
-
+    print("\n[OK] Pipeline başarıyla tamamlandı.")
 
 if __name__ == "__main__":
     start_pipeline()
