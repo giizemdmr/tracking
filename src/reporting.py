@@ -32,12 +32,21 @@ class RegionManager:
             with open(self.config.regions_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            polys = data.get("polygons", [])
-            names = data.get("names", [])
-            
-            for p, n in zip(polys, names):
-                self.polygons.append(np.array(p, np.int32))
-                self.names.append(n)
+            # Yeni format: [{"name": "...", "points": [...]}, ...]
+            if isinstance(data, list):
+                for zone_data in data:
+                    name = zone_data.get("name")
+                    points = zone_data.get("points")
+                    if name and points:
+                        self.polygons.append(np.array(points, np.int32))
+                        self.names.append(name)
+            else:
+                # Eski format desteği (geriye dönük)
+                polys = data.get("polygons", [])
+                names = data.get("names", [])
+                for p, n in zip(polys, names):
+                    self.polygons.append(np.array(p, np.int32))
+                    self.names.append(n)
             
             print(f"[OK] {len(self.polygons)} bolge '{self.config.regions_file}' dosyasindan yuklendi.")
         except Exception as e:
@@ -52,34 +61,70 @@ class RegionManager:
 
 class VehicleRoute:
     """Bir aracın izlediği rota bilgilerini tutar."""
-    def __init__(self, object_id: int):
+    def __init__(self, object_id: int, config=None):
         self.object_id = object_id
+        self.config = config
         self.vehicle_type = "Bilinmiyor"
-        self.route = []  # Bölge isimleri listesi
         self.start_time = datetime.now()
         self.last_update = datetime.now()
-        self.entry_zone = None
-        self.exit_zone = None
+        
+        self.entry_zone = None  # Mühürlenmiş Origin
+        self.exit_zone = None   # Filtrelenmiş Destination
         self.is_completed = False
         
-    def add_zone(self, zone_name: str) -> bool:
-        """Yeni bir bölge ekler, eğer ardışık değilse."""
+        # Katı O-D Mantığı Veri Yapıları
+        self.zone_counts = {}   # {zone_name: frame_count}
+        self.zone_last_seen = {} # {zone_name: last_frame_id}
+        self.route = []         # Görsel rapor için kronolojik geçişler
+        
+    def add_zone(self, zone_name: str, frame_id: int) -> bool:
+        """
+        Kati O-D Kurallari:
+        1. Origin mühürlenir.
+        2. Her bölge için frame sayılır ve son görülme zamanı tutulur.
+        """
+        if zone_name is None:
+            return False
+
+        # --- 1. ORIGIN KİLİDİ ---
+        if self.entry_zone is None:
+            self.entry_zone = zone_name
+            # print(f"[DEBUG] Track {self.object_id} ORIGIN MUHURLENDI: {zone_name}")
+
+        # --- 2. VERİ TOPLAMA ---
+        self.zone_counts[zone_name] = self.zone_counts.get(zone_name, 0) + 1
+        self.zone_last_seen[zone_name] = frame_id
+        
+        # Görsel rota dizisi için (ardışık tekrarları önle)
         if not self.route or self.route[-1] != zone_name:
             self.route.append(zone_name)
-            self.last_update = datetime.now()
-            if len(self.route) == 1:
-                self.entry_zone = zone_name
-            return True
-        return False
+            
+        self.last_update = datetime.now()
+        return True
 
     def complete(self) -> bool:
-        """Rotayı tamamlar (En az 2 farklı bölge geçilmişse gecerlidir)."""
-        if len(self.route) >= 2:
-            self.entry_zone = self.route[0]
-            self.exit_zone = self.route[-1]
-            self.is_completed = True
-            return True
-        return False
+        """
+        Rotayı tamamlar. 
+        Kural: Origin dışındaki, >= 5 frame görülmüş en güncel bölge Destination seçilir.
+        """
+        if self.entry_zone is None:
+            return False
+
+        # --- 3. DESTINATION SEÇİMİ VE GÜRÜLTÜ FİLTRESİ ---
+        potential_destinations = []
+        
+        for zone, count in self.zone_counts.items():
+            # Origin ile aynı olamaz VE en az 5 frame şartı
+            if zone != self.entry_zone and count >= 5:
+                potential_destinations.append(zone)
+        
+        if not potential_destinations:
+            return False # 5 frame şartını sağlayan hedef yoksa raporlama
+
+        # 5 frame şartını sağlayanlar arasından kronolojik EN GÜNCEL olanı seç
+        self.exit_zone = max(potential_destinations, key=lambda z: self.zone_last_seen[z])
+        self.is_completed = True
+        return True
 
     def get_report(self) -> str:
         """Excel ve konsol için rapor metni üretir."""
@@ -97,15 +142,15 @@ class VehicleTracker:
         self.type_stats: Dict[int, Dict[str, float]] = {} # ID -> {type: total_conf}
         self.total_vehicles_seen = 0
 
-    def update_zone(self, object_id: int, zone_name: Optional[str]) -> None:
+    def update_zone(self, object_id: int, zone_name: Optional[str], frame_id: int = 0) -> None:
         if zone_name is None:
             return
             
         if object_id not in self.active_vehicles:
-            self.active_vehicles[object_id] = VehicleRoute(object_id)
+            self.active_vehicles[object_id] = VehicleRoute(object_id, self.config)
             self.total_vehicles_seen += 1
             
-        self.active_vehicles[object_id].add_zone(zone_name)
+        self.active_vehicles[object_id].add_zone(zone_name, frame_id)
 
     def update_type_score(self, object_id: int, vehicle_type: str, confidence: float) -> None:
         """En güvenilir araç tipini belirlemek için %70 üzeri skorları toplayarak hesap tutar."""

@@ -28,6 +28,7 @@ class PipelineConfig:
     vid_stride: Optional[int] = None
     queue_timeout: Optional[float] = None
     display_scale: Optional[float] = None
+    headless_mode: Optional[bool] = None
 
 @dataclass
 class AppConfig:

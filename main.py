@@ -7,6 +7,10 @@ import yaml
 import numpy as np
 from types import SimpleNamespace
 from typing import Optional, Tuple, Any
+
+# Headless sunucular için GUI bağımlılığını kapat (Vast.ai vb.)
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
 from ultralytics import YOLO
 
 from src.reporting import RegionManager, VehicleTracker, ReportGenerator
@@ -38,11 +42,20 @@ class VideoReader(threading.Thread):
     def run(self) -> None:
         if self.stop_event.is_set(): return
         cap = cv2.VideoCapture(self.config.video_path)
+        
+        # Kare atlama (vid_stride) parametresi
+        stride = getattr(self.config.pipeline, 'vid_stride', 1)
+        frame_count = 0
+        
         try:
             while cap.isOpened() and not self.stop_event.is_set():
                 ret, frame = cap.read()
                 if not ret:
                     break
+                
+                frame_count += 1
+                if frame_count % stride != 0:
+                    continue
                 
                 while not self.stop_event.is_set():
                     try:
@@ -141,7 +154,7 @@ class ResultProcessor(threading.Thread):
         
         self.frame_count = 0
         self.total_processed_frames = 0
-        self.start_time = time.time()
+        self.start_time = None  # İlk kare gelene kadar başlatma
         self.current_fps = 0.0
 
         # Raporlama ve Loglama (Yeni merkezi Config ile)
@@ -178,10 +191,12 @@ class ResultProcessor(threading.Thread):
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(output_name, fourcc, self.fps, (self.width, self.height))
         
-        cv2.namedWindow("Canli Takip Sonucu", cv2.WINDOW_NORMAL)
-        display_w = int(1280 * self.config.display_scale)
-        display_h = int(720 * self.config.display_scale)
-        cv2.resizeWindow("Canli Takip Sonucu", display_w, display_h)
+        headless = getattr(self.config.pipeline, 'headless_mode', False)
+        if not headless:
+            cv2.namedWindow("Canli Takip Sonucu", cv2.WINDOW_NORMAL)
+            display_w = int(1280 * self.config.display_scale)
+            display_h = int(720 * self.config.display_scale)
+            cv2.resizeWindow("Canli Takip Sonucu", display_w, display_h)
 
         try:
             while not self.stop_event.is_set():
@@ -231,7 +246,7 @@ class ResultProcessor(threading.Thread):
                             cx, cy = (x1 + x2) // 2, y2
                             current_zone = self.region_manager.point_in_region((cx, cy))
 
-                        self.vehicle_tracker.update_zone(tid, current_zone)
+                        self.vehicle_tracker.update_zone(tid, current_zone, self.total_processed_frames)
                         self.vehicle_tracker.update_type_score(tid, class_name, float(conf))
 
 
@@ -262,17 +277,27 @@ class ResultProcessor(threading.Thread):
                 if self.zone_mask is not None and np.any(self.zone_mask):
                     frame[self.zone_mask] = cv2.addWeighted(frame, 0.80, self.zone_fill_overlay, 0.20, 0)[self.zone_mask]
 
-                # FPS Hesaplama
+                # FPS Hesaplama (vid_stride uyumlu)
+                if self.start_time is None:
+                    self.start_time = time.time()
+                
                 self.frame_count += 1
                 self.total_processed_frames += 1
                 elapsed = time.time() - self.start_time
-                if elapsed > 1.0:
-                    self.current_fps = self.frame_count / elapsed
+                
+                # Her 0.5 saniyede bir veya 10 karede bir guncelle (Daha akici)
+                if elapsed > 0.5:
+                    stride = getattr(self.config.pipeline, 'vid_stride', 1)
+                    # Isleme FPS'i (Model hizi)
+                    proc_fps = self.frame_count / elapsed
+                    # Efektif FPS (Videonun tuketilme hizi)
+                    self.current_fps = proc_fps * stride
+                    
                     self.frame_count = 0
                     self.start_time = time.time()
 
                 # Sadece FPS Sayaci (Ultra Sade)
-                fps_str = f"{self.current_fps:.1f} FPS"
+                fps_str = f"SPEED: {self.current_fps:.1f} FPS"
                 
                 # Ufak siyah opak panel
                 cv2.rectangle(frame, (5, 5), (140, 45), (0, 0, 0), -1)
@@ -281,11 +306,15 @@ class ResultProcessor(threading.Thread):
                 cv2.putText(frame, fps_str, (10, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 100), 2, cv2.LINE_AA)
                 
                 if writer.isOpened(): writer.write(frame)
-                cv2.imshow("Canli Takip Sonucu", frame)
                 
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    self.stop_event.set()
-                    break
+                # Headless Modu Kontrolu (Remote Serverlar icin)
+                # YAML'da pipeline: headless_mode: true ise imshow/waitKey atlanir.
+                headless = getattr(self.config.pipeline, 'headless_mode', False)
+                if not headless:
+                    cv2.imshow("Canli Takip Sonucu", frame)
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        self.stop_event.set()
+                        break
                 
                 self.output_queue.task_done()
                 
