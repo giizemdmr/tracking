@@ -7,70 +7,11 @@ import yaml
 import numpy as np
 from types import SimpleNamespace
 from typing import Optional, Tuple, Any
-from PIL import Image, ImageDraw, ImageFont
 from ultralytics import YOLO
 
 from src.reporting import RegionManager, VehicleTracker, ReportGenerator
-
-# D:\config.py referansindan arac renkleri (BGR)
-VEHICLE_COLORS = {
-    "yaya": (128, 128, 128),
-    "bisiklet": (255, 255, 0),
-    "motosiklet": (255, 0, 255),
-    "otomobil": (0, 255, 0),
-    "minivan": (180, 105, 255),
-    "otobus": (255, 0, 0),
-    "kamyon": (0, 0, 255),
-    "tir": (0, 0, 180),
-    "pikap": (0, 165, 255),
-    "panelvan": (200, 150, 100),
-    "minibus": (0, 255, 255),
-    "kamyonet": (128, 0, 255),
-    "arac": (200, 200, 200),
-}
-
-def get_vehicle_color(vehicle_type: str) -> tuple:
-    """Arac tipine gore BGR renk dondurur."""
-    v_type_lower = vehicle_type.lower()
-    for key, color in VEHICLE_COLORS.items():
-        if key in v_type_lower:
-            return color
-    return VEHICLE_COLORS["arac"]
-
-def load_config(yaml_path: str) -> SimpleNamespace:
-    """YAML dosyasini okur, D:\\config.py varsayilanlari ile birlestirir."""
-    defaults = {
-        "video_path": "avm.mp4",
-        "model_path": r"D:\tracking\models\yolov8.engine",
-        "regions_file": "bolgeler.json",
-        "excel_filename": "trafik_raporu_yogunburc.xlsx",
-        "headless_mode": False,
-        "skip_frames": 4,
-        "display_scale": 1.0,
-        "confidence_threshold": 0.25,
-        "nms_threshold": 0.70, # Perspektif yığılması icin artirildı (Eski deger: 0.45). Kesisim toleransi yukseltilerek araclari yutmasi engellendi.
-        "input_size": 1024,
-        "use_half": True,
-        "track_thresh": 0.5,
-        "track_buffer": 120,
-        "match_thresh": 0.7,
-        "max_disappeared": 50,
-        "max_distance": 500,
-        "zone_entry_frames": 3,
-        "zone_change_frames": 5,
-        "min_route_zone_duration": 15,
-    }
-    try:
-        with open(yaml_path, 'r', encoding='utf-8') as f:
-            data = yaml.safe_load(f) or {}
-        defaults.update(data)
-        print(f"[OK] Config yuklendi: {yaml_path}")
-    except Exception as e:
-        print(f"[WARN] YAML okunamadi ({e}), varsayilan degerler kullaniliyor.")
-    
-    cfg = SimpleNamespace(**defaults)
-    cfg.get_vehicle_color = get_vehicle_color
-    return cfg
+from src.engine.zone_analyzer import ZoneAnalyzer
+from src.config_manager import config_manager
 
 class VideoReader(threading.Thread):
     def __init__(self, config, input_queue: queue.Queue, stop_event: threading.Event) -> None:
@@ -145,18 +86,17 @@ class TrackerEngine(threading.Thread):
                     if frame is not None: self.input_queue.task_done()
                     break
                     
-                # Botsort parametrelerini direkt YAML'dan okuyoruz
-                # NMS ve Tracker parametreleri optimize sekilde (TRT uzerinden sifir latency islemleri)
+                # NMS ve Tracker parametreleri optimize sekilde (Dinamik Config uzerinden)
                 results = model.track(
                     source=frame, 
                     stream=True, 
                     persist=True, 
-                    half=self.config.use_half, 
+                    half=self.config.yolo.use_half, 
                     verbose=False, 
-                    tracker="config/botsort_traffic.yaml", 
-                    imgsz=self.config.input_size,
-                    conf=self.config.confidence_threshold,
-                    iou=self.config.nms_threshold, # Kesisim (Overlap) esnekligi
+                    tracker="config/pipeline_config.yaml", 
+                    imgsz=self.config.yolo.input_size,
+                    conf=self.config.yolo.confidence_threshold,
+                    iou=self.config.yolo.nms_iou, # Kesisim (Overlap) esnekligi
                     agnostic_nms=False # OTO, OTOBUS'u yutmasin diye class spesifik kalmali
                 )
                 
@@ -205,20 +145,29 @@ class ResultProcessor(threading.Thread):
         self.current_fps = 0.0
 
         # Raporlama ve Loglama (Yeni merkezi Config ile)
-        self.region_manager = RegionManager(self.config)
+        self.region_manager = RegionManager(self.config)  # Sadece cizim icin
+        # Birlesik Zone Analizi (Kalman Occlusion Guard + Quantum Leap)
+        zones_path = os.path.join("config", "zones.json")
+        self.zone_analyzer = ZoneAnalyzer(zones_path, cache_threshold=8.0) if os.path.exists(zones_path) else None
         self.vehicle_tracker = VehicleTracker(self.config)
         self.report_generator = ReportGenerator(self.config)
         self.routes_log = []
         
-        # Pillow modern font onyukleme
-        try:
-            self.font = ImageFont.truetype("Arial.ttf", 14)
-            self.font_large = ImageFont.truetype("Arial.ttf", 26)
-            self.font_mid = ImageFont.truetype("Arial.ttf", 16)
-        except IOError:
-            self.font = ImageFont.load_default()
-            self.font_large = ImageFont.load_default()
-            self.font_mid = ImageFont.load_default()
+        # --- Pre-compute Zone Overlay ---
+        self.zone_fill_overlay = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        
+        for i, poly in enumerate(self.region_manager.polygons):
+            # Acik sari renk dolgu (BGR: 150, 255, 255)
+            cv2.fillPoly(self.zone_fill_overlay, [poly], (150, 255, 255))
+            cv2.polylines(self.zone_fill_overlay, [poly], True, (0, 200, 200), 2, lineType=cv2.LINE_AA)
+            
+            M = cv2.moments(poly)
+            if M['m00'] != 0:
+                mcx, mcy = int(M['m10'] / M['m00']), int(M['m01'] / M['m00'])
+                cv2.putText(self.zone_fill_overlay, str(self.region_manager.names[i]), (mcx - 15, mcy), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2, cv2.LINE_AA)
+            
+        self.zone_mask = np.any(self.zone_fill_overlay > 0, axis=-1)
+        # ---------------------------------
 
     def run(self) -> None:
         if self.stop_event.is_set(): return
@@ -250,10 +199,6 @@ class ResultProcessor(threading.Thread):
                     
                 frame, boxes, model_names, kalman_states = item
                 
-                # Pillow (PIL) cizimleri icin bos bir RGBA (overlay) katmani olustur
-                overlay = Image.new('RGBA', (self.width, self.height), (0, 0, 0, 0))
-                draw = ImageDraw.Draw(overlay)
-
                 # Cizim islemleri
                 if boxes is not None and boxes.id is not None:
                     coords = boxes.xyxy.cpu().numpy()
@@ -267,54 +212,39 @@ class ResultProcessor(threading.Thread):
                         cid = int(cls_id)
                         class_name = model_names.get(cid, "Arac")
                         
-                        # -- Kalman State Rescue (Occlusion Guard) --
-                        cx, cy = (x1 + x2) // 2, y2 
-                        current_h = y2 - y1
+                        # -- Birlesik Zone Analizi (Kalman Guard + Quantum Leap) --
+                        bbox = (x1, y1, x2, y2)
                         
-                        if tid in kalman_states:
-                            k_x, k_y, k_a, k_h = kalman_states[tid]
-                            # Eger YOLO kutusu Kalman'in gercek fiziksel boyut beklentisinden aniden %20+ kuculduyse
-                            # (Bir seyin arkasina girip alti kesildiyse) veya Guven skoru ani dustuyse -> KAPANMA VAR!
-                            if current_h < (k_h * 0.80) or conf < 0.40:
-                                # YOLO koordinatlarini COPE AT. 
-                                # Tracker'in hiz ve yon vektorunden(ivme) gelen State ([x, y, a, h]) degerleriyle SANAL 'cy' olustur!
-                                cx = int(k_x)
-                                cy = int(k_y + (k_h / 2))
+                        if self.zone_analyzer:
+                            # ZoneAnalyzer: Kalman rescue + LineString trajectory icsel olarak uygulanir
+                            current_zone = self.zone_analyzer.determine_zone(
+                                bbox=bbox, track_id=tid, conf=float(conf),
+                                kalman_states=kalman_states
+                            )
+                            # Gorsellestirme icin kurtarilmis (cx, cy) noktasini al
+                            cx, cy, _ = self.zone_analyzer.get_rescued_point(
+                                bbox, tid, float(conf), kalman_states
+                            )
+                            cx, cy = int(cx), int(cy)
+                        else:
+                            # Fallback: ZoneAnalyzer yoksa eski RegionManager kullan
+                            cx, cy = (x1 + x2) // 2, y2
+                            current_zone = self.region_manager.point_in_region((cx, cy))
 
-                        # Guncellenmis/Korunmus (Rescue) Noktayla Zone Analizini Yap
-                        current_zone = self.region_manager.point_in_region((cx, cy))
                         self.vehicle_tracker.update_zone(tid, current_zone)
                         self.vehicle_tracker.update_type_score(tid, class_name, float(conf))
 
-                        # Eger arac hicbir zoneda degilse ekranda cizme (FPS ve gereksiz kalabalik optimizasyonu)
-                        if current_zone is None:
-                            continue
-                        
-                        # OpenCV BGR rengini RGB'ye cevir (ImageDraw icin)
+
+                        # OpenCV Arac Renkleri
                         b, g, r = self.config.get_vehicle_color(class_name)
-                        rgb_color = (r, g, b)
-                        bg_color = (r, g, b, 150) # saydamlik ekli rgb
                         
-                        # Ince ve zarif bounding box YERINE sadece bottom-center nokta cizimi (Nokta Modu)
-                        # -1 ici dolu, siyah dis cizgiyle modern gorunum
+                        # Sirf Noktasal Isaretleme (FPS max)
                         cv2.circle(frame, (cx, cy), 5, (b, g, r), -1, lineType=cv2.LINE_AA)
                         cv2.circle(frame, (cx, cy), 5, (0, 0, 0), 1, lineType=cv2.LINE_AA)
-                        
-                        # Etiket
-                        label = f"id {tid} {class_name}"
-                        left, top, right, bottom = draw.textbbox((0, 0), label, font=self.font)
-                        tw, th = right - left, bottom - top
-                        
-                        pad_x, pad_y = 6, 4
-                        
-                        # Noktanin uzerine ortalayarak yerlestir (X: merkez, Y: top - bosluk)
-                        text_x = cx - (tw // 2)
-                        text_y = cy - th - 18
-                        
-                        bg_rect = [text_x - pad_x, text_y - pad_y, text_x + tw + pad_x, text_y + th + pad_y]
-                        
-                        draw.rounded_rectangle(bg_rect, radius=5, fill=bg_color)
-                        draw.text((text_x, text_y), label, font=self.font, fill=(255, 255, 255, 255))
+
+                        # Minimalist ID Cizimi (Gozlem icin)
+                        cv2.putText(frame, str(tid), (cx + 8, cy + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2, cv2.LINE_AA)
+                        cv2.putText(frame, str(tid), (cx + 8, cy + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
 
                 # Rotalari Al ve Logla
                 active_ids = list(track_ids) if (boxes is not None and boxes.id is not None) else []
@@ -326,32 +256,13 @@ class ResultProcessor(threading.Thread):
                     self.routes_log.append(report_item)
                     if len(self.routes_log) > 5: self.routes_log.pop(0)
 
-                # UI Cizimleri (Sag Ust Loglar)
-                for i, log_text in enumerate(reversed(self.routes_log)):
-                    cv2.putText(frame, log_text, (self.width - 500, 50 + (i * 35)), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2, cv2.LINE_AA)
+                # Ekrana canli rota cizimleri KALDIRILDI (FPS korunumu)
 
-                # Bolgeleri Ciz (Saydam Dolgulu)
-                zone_overlay = frame.copy()
-                for i, poly in enumerate(self.region_manager.polygons):
-                    # Acik sari renk dolgu (BGR: 150, 255, 255)
-                    cv2.fillPoly(zone_overlay, [poly], (150, 255, 255))
-                    cv2.polylines(frame, [poly], True, (0, 255, 255), 1, lineType=cv2.LINE_AA)
-                
-                # Sadece %20 opaklikla saydamlik (arka planin cok net gorunmesi icin)
-                cv2.addWeighted(zone_overlay, 0.20, frame, 0.80, 0, frame)
+                # OpenCV Pre-computed Zone Overlay Ekleme (Sadece Saydam Dolgu)
+                if self.zone_mask is not None and np.any(self.zone_mask):
+                    frame[self.zone_mask] = cv2.addWeighted(frame, 0.80, self.zone_fill_overlay, 0.20, 0)[self.zone_mask]
 
-                for i, poly in enumerate(self.region_manager.polygons):
-                    M = cv2.moments(poly)
-                    if M['m00'] != 0:
-                        mcx, mcy = int(M['m10'] / M['m00']), int(M['m01'] / M['m00'])
-                        # Modern stroke tekniği ile yazım
-                        cv2.putText(frame, f"Zone {self.region_manager.names[i]}", (mcx - 25, mcy), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3, cv2.LINE_AA)
-                        cv2.putText(frame, f"Zone {self.region_manager.names[i]}", (mcx - 25, mcy), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
-
-                # FPS Hesaplamasi
+                # FPS Hesaplama
                 self.frame_count += 1
                 self.total_processed_frames += 1
                 elapsed = time.time() - self.start_time
@@ -360,26 +271,14 @@ class ResultProcessor(threading.Thread):
                     self.frame_count = 0
                     self.start_time = time.time()
 
-                # Modern FPS / Threshold Paneli (Pillow ile)
+                # Sadece FPS Sayaci (Ultra Sade)
                 fps_str = f"{self.current_fps:.1f} FPS"
-                conf_str = f"Threshold: {self.config.confidence_threshold:.2f}"
                 
-                # Panel arka plani
-                draw.rounded_rectangle([15, 15, 180, 85], radius=8, fill=(0, 0, 0, 180))
-                # Yazilar (Drop shadow hissi ile modern)
-                draw.text((26, 26), fps_str, font=self.font_large, fill=(0, 0, 0, 255))
-                draw.text((25, 25), fps_str, font=self.font_large, fill=(0, 255, 100, 255))
-                
-                draw.text((26, 61), conf_str, font=self.font_mid, fill=(0, 0, 0, 255))
-                draw.text((25, 60), conf_str, font=self.font_mid, fill=(255, 255, 255, 255))
-
-                # Tum OpenCV cizimleri tamamlandiktan sonra resmi PIL'a cevirip overlay'i ekle
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                pil_img = Image.fromarray(rgb_frame).convert('RGBA')
-                pil_img.paste(overlay, (0, 0), overlay)
-                
-                # RGB olarak geri OpenCV'ye dondur
-                frame = cv2.cvtColor(np.array(pil_img.convert('RGB')), cv2.COLOR_RGB2BGR)
+                # Ufak siyah opak panel
+                cv2.rectangle(frame, (5, 5), (140, 45), (0, 0, 0), -1)
+                # FPS Yazi
+                cv2.putText(frame, fps_str, (12, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 3, cv2.LINE_AA)
+                cv2.putText(frame, fps_str, (10, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 100), 2, cv2.LINE_AA)
                 
                 if writer.isOpened(): writer.write(frame)
                 cv2.imshow("Canli Takip Sonucu", frame)
@@ -391,15 +290,15 @@ class ResultProcessor(threading.Thread):
                 self.output_queue.task_done()
                 
         finally:
-            self.report_generator.save()
-            self.report_generator.print_statistics(self.total_processed_frames)
+            self.report_generator.save_final_report(self.vehicle_tracker)
+            self.report_generator.print_statistics(self.total_processed_frames, self.vehicle_tracker.total_vehicles_seen)
             if writer.isOpened(): writer.release()
             cv2.destroyAllWindows()
 
 
 def start_pipeline() -> None:
-    # 1. Config Yukle
-    config = load_config("config/botsort_traffic.yaml")
+    # 1. Merkezi Config Yukle
+    config = config_manager
     
     # User yollarini koruyalim (D:\avm.mp4 vb.)
     # Eger YAML'da yoksa veya gecersiz ise varsayilanlari setle

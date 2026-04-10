@@ -286,6 +286,7 @@ def main():
             frame = frame_data["frame"]
             detections = frame_data["detections"]
             inference_ms = frame_data["inference_ms"]
+            kalman_states = frame_data.get("kalman_states", {})
 
             # --- STAGE 2: TRACKING + ZONE ANALYSIS ---
             t_track_start = time.perf_counter()
@@ -296,9 +297,14 @@ def main():
                 conf = det["conf"]
                 bbox = det["bbox"]
 
-                # Zone check with spatial caching
+                # Zone check with hybrid rescue + trajectory
                 if zones:
-                    current_zone = zones.check_zones(bbox, track_id=track_id)
+                    current_zone = zones.check_zones(
+                        bbox, 
+                        track_id=track_id, 
+                        kalman_states=kalman_states, 
+                        conf=conf
+                    )
                     if current_zone:
                         memory.update_zone(track_id, current_zone)
 

@@ -95,6 +95,7 @@ class VehicleTracker:
         self.config = config
         self.active_vehicles: Dict[int, VehicleRoute] = {}
         self.type_stats: Dict[int, Dict[str, float]] = {} # ID -> {type: total_conf}
+        self.total_vehicles_seen = 0
 
     def update_zone(self, object_id: int, zone_name: Optional[str]) -> None:
         if zone_name is None:
@@ -102,6 +103,7 @@ class VehicleTracker:
             
         if object_id not in self.active_vehicles:
             self.active_vehicles[object_id] = VehicleRoute(object_id)
+            self.total_vehicles_seen += 1
             
         self.active_vehicles[object_id].add_zone(zone_name)
 
@@ -236,6 +238,21 @@ class ReportGenerator:
         """Kayıt sayısını döndürür."""
         return len(self.records)
     
+    def save_final_report(self, tracker: 'VehicleTracker') -> bool:
+        """
+        Video sonunda aktif kalan tüm araçların rotalarını 'boş tespit listesi' ile zorla (-flush) 
+        kapatarak rapora ekler ve projeyi kaydeder.
+        """
+        print("\n[INFO] Video sonlandi. Yarim kalan rotalar kapatiliyor...")
+        
+        # Tracker'a 'ekranda hicbir target yok ([])' diyerek aktiflerin hepsini bitirt.
+        flushed_routes = tracker.get_completed_routes([])
+        for route in flushed_routes:
+            self.add_route(route)
+            print(f"[FLUSH TAMAMLANDI] {route.get_report()}")
+            
+        return self.save()
+
     def save(self) -> bool:
         """
         Raporu Excel dosyasına kaydeder.

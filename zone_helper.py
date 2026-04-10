@@ -21,7 +21,7 @@ import os
 # ==========================================
 # AYARLAR (Burayı videonuza göre güncelleyin)
 # ==========================================
-VIDEO_PATH = r"D:\avm.mp4" 
+VIDEO_PATH = r"C:\Users\W11\Videos\2026-04-09 17-51-58.mp4" 
 SAVE_FILE = "bolgeler.json"
 DISPLAY_SCALE = 1 
 

@@ -1,0 +1,56 @@
+# ==========================================
+# GLOBAL PIPELINE & TRACKING CONFIGURATION
+# ==========================================
+
+# 1. BOT-SORT TRACKER PARAMETRELERI (Ultralytics tarafindan kok dizinden okunur)
+tracker_type: botsort
+track_high_thresh: 0.50
+track_low_thresh: 0.1
+new_track_thresh: 0.6
+track_buffer: 60
+match_thresh: 0.80
+fuse_score: True
+gmc_method: none
+proximity_thresh: 0.5
+appearance_thresh: 0.65
+with_reid: False
+model: osnet_x0_25_msmt17.onnx
+
+# 2. YOLO INFERENCE PARAMETRELERI
+yolo:
+  input_size: 1024
+  use_half: true
+  confidence_threshold: 0.25
+  nms_iou: 0.70
+
+# 3. KORUMA & O-D (ORIGIN-DESTINATION) PARAMETRELERI
+tracking:
+  kalman_drop_height_ratio: 0.80
+  kalman_rescue_conf: 0.40
+  stale_buffer: 200
+  zone_entry_frames: 3
+  zone_change_frames: 5
+  min_route_zone_duration: 15
+
+# 4. PIPELINE DONANIM & I/O PARAMETRELERI
+pipeline:
+  video_path: "C:\\Users\\W11\\Videos\\2026-04-09 17-51-58.mp4"
+  model_path: "D:\\tracking\\models\\yolov8.engine"
+  regions_file: "bolgeler.json"
+  excel_filename: "trafik_raporu_yogunburc.xlsx"
+  vid_stride: 2
+  queue_timeout: 5.0
+  display_scale: 1.0
+
+# 5. ARAC RENKLERI (BGR formatinda)
+colors:
+  yaya: [0, 200, 200]
+  bisiklet: [0, 255, 0]
+  motosiklet: [255, 50, 50]
+  otomobil: [50, 150, 255]
+  otobus: [255, 0, 255]
+  agir_tasit: [0, 0, 255]
+  panelvan: [255, 255, 0]
+  minibus: [0, 150, 200]
+  kamyonet: [255, 100, 0]
+  arac: [200, 200, 200]

@@ -122,15 +122,12 @@ class VisionEngine:
 
                 # --- EXTRACT DETECTIONS ---
                 detections = []
-
                 if results and results[0].boxes is not None:
                     boxes = results[0].boxes
-
                     if boxes.id is not None:
                         for i in range(len(boxes)):
                             track_id = boxes.id[i].item() if boxes.id is not None else None
                             conf = float(boxes.conf[i].item())
-
                             if track_id is not None and conf > 0.30:
                                 detections.append({
                                     "track_id": int(track_id),
@@ -139,11 +136,22 @@ class VisionEngine:
                                     "bbox": [round(x, 2) for x in boxes.xyxy[i].tolist()]
                                 })
 
+                # --- EXTRACT KALMAN STATES (for Occlusion Guard) ---
+                kalman_states = {}
+                if hasattr(self.model, 'predictor') and self.model.predictor is not None:
+                    if hasattr(self.model.predictor, 'trackers') and len(self.model.predictor.trackers) > 0:
+                        bt_tracker = self.model.predictor.trackers[0]
+                        # Tracked + Lost tracks contain the filter state
+                        for t in getattr(bt_tracker, 'tracked_stracks', []) + getattr(bt_tracker, 'lost_stracks', []):
+                            if hasattr(t, 'track_id') and hasattr(t, 'mean'):
+                                kalman_states[int(t.track_id)] = t.mean[:4].copy()
+
                 yield {
                     "frame_id": frame_count,
                     "frame": frame,
                     "detections": detections,
-                    "inference_ms": inference_ms
+                    "inference_ms": inference_ms,
+                    "kalman_states": kalman_states
                 }
 
         except queue.Empty:
