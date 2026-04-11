@@ -35,11 +35,10 @@ tracking:
 
 # 4. PIPELINE DONANIM & I/O PARAMETRELERI
 pipeline:
-  video_path: "deneme2.mp4"
-  model_path: "models/best.pt"
-  regions_file: "config/zones.json"
+  video_path: "d:/deneme2.mp4"
+  model_path: "models/yolov8.engine"
   lines_file: "config/lines.json"
-  excel_filename: "deneme6.csv"
+  excel_filename: "deneme55.csv"
   vid_stride: 2
   queue_timeout: 5.0
   display_scale: 1.0

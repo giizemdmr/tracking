@@ -14,54 +14,8 @@ from typing import List, Dict, Any, Tuple, Optional
 import os
 import math
 
-
-
-class RegionManager:
-    """JSON dosyasından bölgeleri yükler ve nokta kontrolü yapar."""
-    def __init__(self, config):
-        self.config = config
-        self.polygons = []
-        self.names = []
-        self._load_regions()
-
-    def _load_regions(self) -> None:
-        if not os.path.exists(self.config.regions_file):
-            print(f"[ERROR] Bolge dosyasi bulunamadi: {self.config.regions_file}")
-            return
-            
-        try:
-            with open(self.config.regions_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            # Yeni format: [{"name": "...", "points": [...]}, ...]
-            if isinstance(data, list):
-                for zone_data in data:
-                    name = zone_data.get("name")
-                    points = zone_data.get("points")
-                    if name and points:
-                        self.polygons.append(np.array(points, np.int32))
-                        self.names.append(name)
-            else:
-                # Eski format desteği (geriye dönük)
-                polys = data.get("polygons", [])
-                names = data.get("names", [])
-                for p, n in zip(polys, names):
-                    self.polygons.append(np.array(p, np.int32))
-                    self.names.append(n)
-            
-            print(f"[OK] {len(self.polygons)} bolge '{self.config.regions_file}' dosyasindan yuklendi.")
-        except Exception as e:
-            print(f"[ERROR] Bolgeler yuklenirken hata: {e}")
-
-    def point_in_region(self, point: Tuple[int, int]) -> Optional[str]:
-        """Verilen noktanın hangi bölgede olduğunu döndürür."""
-        for i, poly in enumerate(self.polygons):
-            if cv2.pointPolygonTest(poly, (float(point[0]), float(point[1])), False) >= 0:
-                return self.names[i]
-        return None
-
 class VehicleRoute:
-    """Bir aracın izlediği rota bilgilerini tutar."""
+    """Bir aracın izlediği rota (Gate-to-Gate) bilgilerini tutar."""
     def __init__(self, object_id: int, config=None):
         self.object_id = object_id
         self.config = config
@@ -69,75 +23,65 @@ class VehicleRoute:
         self.start_time = datetime.now()
         self.last_update = datetime.now()
         
-        self.entry_zone = None  # Mühürlenmiş Origin
-        self.exit_zone = None   # Filtrelenmiş Destination
+        self.entry_gate = None  # Mühürlenmiş Origin Hattı
+        self.exit_gate = None   # Son Geçilen Destination Hattı
         self.is_completed = False
         
-        # Katı O-D Mantığı Veri Yapıları
-        self.zone_counts = {}   # {zone_name: frame_count}
-        self.zone_last_seen = {} # {zone_name: last_frame_id}
+        # O-D Mantığı Veri Yapıları
+        self.gate_counts = {}   # {gate_name: frame_count}
+        self.gate_last_seen = {} # {gate_name: last_frame_id}
         self.route = []         # Görsel rapor için kronolojik geçişler
         
-    def add_zone(self, zone_name: str, frame_id: int) -> bool:
+    def add_gate_contact(self, gate_name: str, frame_id: int) -> bool:
         """
         Kati O-D Kurallari:
-        1. Origin mühürlenir.
-        2. Her bölge için frame sayılır ve son görülme zamanı tutulur.
+        1. Origin (Giriş) hattı ilk temasla mühürlenir.
+        2. Her temas için frame sayılır ve kronolojik rota tutulur.
         """
-        if zone_name is None:
+        if gate_name is None:
             return False
 
         # --- 1. ORIGIN KİLİDİ ---
-        if self.entry_zone is None:
-            self.entry_zone = zone_name
-            # print(f"[DEBUG] Track {self.object_id} ORIGIN MUHURLENDI: {zone_name}")
+        if self.entry_gate is None:
+            self.entry_gate = gate_name
 
         # --- 2. VERİ TOPLAMA ---
-        self.zone_counts[zone_name] = self.zone_counts.get(zone_name, 0) + 1
-        self.zone_last_seen[zone_name] = frame_id
+        self.gate_counts[gate_name] = self.gate_counts.get(gate_name, 0) + 1
+        self.gate_last_seen[gate_name] = frame_id
         
         # Görsel rota dizisi için (ardışık tekrarları önle)
-        if not self.route or self.route[-1] != zone_name:
-            self.route.append(zone_name)
+        if not self.route or self.route[-1] != gate_name:
+            self.route.append(gate_name)
             
         self.last_update = datetime.now()
         return True
 
-    def complete(self) -> bool:
-        """
-        Rotayı tamamlar. 
-        Virtual Line Kuralı: Origin'den FARKLI en az 1 kapıdan geçilmiş olmalı.
-        Birden fazla aday varsa kronolojik en güncel olanı Destination seçilir.
-        """
-        if self.entry_zone is None:
-            return False
-
-        # --- DESTINATION SEÇİMİ ---
-        potential_destinations = []
+    def finalize(self):
+        """Alternatif çıkış belirleme ve rotayı tamamlama."""
+        if not self.entry_gate:
+            return
+            
+        # Eğer birden fazla hat ile temas varsa, girişten farklı en son hattı 'Çıkış' yap.
+        if len(self.gate_counts) > 1:
+            for gate in reversed(self.route):
+                if gate != self.entry_gate:
+                    self.exit_gate = gate
+                    break
         
-        for zone, count in self.zone_counts.items():
-            # Origin ile aynı olamaz VE en az 1 kez geçilmiş olmalı
-            if zone != self.entry_zone and count >= 1:
-                potential_destinations.append(zone)
-        
-        if not potential_destinations:
-            return False  # Sadece tek kapıdan geçenler raporlanmaz
-
-        # Adaylar arasından kronolojik EN GÜNCEL olanı seç
-        self.exit_zone = max(potential_destinations, key=lambda z: self.zone_last_seen[z])
         self.is_completed = True
-        return True
 
     def get_report(self) -> str:
-        """Excel ve konsol için rapor metni üretir."""
-        return f"{self.object_id} idli {self.vehicle_type} {self.entry_zone} ten girdi {self.exit_zone} ten cikti"
+        """Rota özetini metin olarak döndürür."""
+        origin = self.entry_gate or "Bilinmiyor"
+        dest = self.exit_gate or "Bilinmiyor"
+        return f"ID {self.object_id} [{self.vehicle_type}]: {origin} -> {dest} (Rota: {' -> '.join(self.route)})"
 
     def get_route_string(self) -> str:
         """Tam rotayı string olarak döndürür."""
         return " -> ".join(self.route)
 
 class VehicleTracker:
-    """Tüm araçların ömür döngüsünü ve bölge geçişlerini yönetir."""
+    """Tüm araçların ömür döngüsünü ve hat geçişlerini yönetir."""
     def __init__(self, config):
         self.config = config
         self.active_vehicles: Dict[int, VehicleRoute] = {}
@@ -149,15 +93,13 @@ class VehicleTracker:
         """Her frame'de aracin hala ekranda oldugunu kaydeder."""
         self.last_seen_frame[object_id] = frame_id
 
-    def update_zone(self, object_id: int, zone_name: Optional[str], frame_id: int = 0) -> None:
-        if zone_name is None:
-            return
-            
+    def update_gate_contact(self, object_id: int, gate_name: str, frame_id: int) -> None:
+        """Aracın bir hattan geçtiğini veya hattı tetiklediğini kaydeder."""
         if object_id not in self.active_vehicles:
             self.active_vehicles[object_id] = VehicleRoute(object_id, self.config)
             self.total_vehicles_seen += 1
             
-        self.active_vehicles[object_id].add_zone(zone_name, frame_id)
+        self.active_vehicles[object_id].add_gate_contact(gate_name, frame_id)
 
     def update_type_score(self, object_id: int, vehicle_type: str, confidence: float, bbox: List[int] = None) -> None:
         """
@@ -212,9 +154,9 @@ class VehicleTracker:
             last_seen = self.last_seen_frame.get(tid, 0)
             if current_frame - last_seen > stale_buffer:
                 # Araç tamamen ekrandan çıktı (stale oldu)
-                if route.complete():
-                    route.vehicle_type = self.get_best_type(tid)
-                    completed.append(route)
+                route.finalize()
+                route.vehicle_type = self.get_best_type(tid)
+                completed.append(route)
                 ids_to_remove.append(tid)
                 
         for tid in ids_to_remove:
@@ -263,8 +205,8 @@ class ReportGenerator:
             report_text,
             route.object_id,
             route.vehicle_type,
-            route.entry_zone,
-            route.exit_zone,
+            route.entry_gate,
+            route.exit_gate,
             route_string
         ]
         
@@ -274,8 +216,8 @@ class ReportGenerator:
         self,
         object_id: int,
         vehicle_type: str,
-        entry_zone: str,
-        exit_zone: str,
+        entry_gate: str,
+        exit_gate: str,
         full_route: List[str]
     ) -> None:
         """
@@ -284,21 +226,23 @@ class ReportGenerator:
         Args:
             object_id: Araç ID'si
             vehicle_type: Araç tipi
-            entry_zone: Giriş bölgesi
-            exit_zone: Çıkış bölgesi
+            entry_gate: Giriş hattı
+            exit_gate: Çıkış hattı
             full_route: Tam rota listesi
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        route_string = " → ".join(full_route)
-        report_text = f"{object_id} idli {vehicle_type} {entry_zone} ten girdi {exit_zone} ten cikti"
-        
+        # Giris ve Cikis hatlarini al
+        entry_gate = entry_gate or "Unknown"
+        exit_gate = exit_gate or "Unknown"
+        route_string = " -> ".join(full_route)
+
         record = [
             timestamp,
-            report_text,
+            f"Gecis: {entry_gate} -> {exit_gate}",
             object_id,
             vehicle_type,
-            entry_zone,
-            exit_zone,
+            entry_gate,
+            exit_gate,
             route_string
         ]
         
