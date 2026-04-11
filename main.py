@@ -386,12 +386,18 @@ class ResultProcessor(threading.Thread):
                     total_completed = self.report_generator.get_record_count()
                     print(f"\r[TAKIP] {self.fps_str} | TOPLAM GECIS: {total_completed}    ", end="", flush=True)
                 
-                # Ufak siyah opak panel
-                cv2.rectangle(frame, (5, 5), (450, 45), (0, 0, 0), -1)
-                # FPS Yazi
+                # --- MODERN HUD (Bilgi Paneli) Tasarımı ---
+                # 1. Yarı Şeffaf Arka Plan (Glassmorphism efekti)
+                overlay = frame.copy()
+                cv2.rectangle(overlay, (5, 5), (420, 38), (20, 20, 20), -1) # Koyu füme panel
+                cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame) # %60 Opaklık
+                
+                # 2. İnce ve Modern Tipografi
                 display_fps_str = getattr(self, 'fps_str', 'SPEED: Calculating...')
-                cv2.putText(frame, display_fps_str, (12, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 3, cv2.LINE_AA)
-                cv2.putText(frame, display_fps_str, (10, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 100), 2, cv2.LINE_AA)
+                # Gölge efekti (Derinlik için)
+                cv2.putText(frame, display_fps_str, (13, 27), cv2.FONT_HERSHEY_DUPLEX, 0.55, (0, 0, 0), 1, cv2.LINE_AA)
+                # Ana Metin (Temiz Beyaz)
+                cv2.putText(frame, display_fps_str, (12, 26), cv2.FONT_HERSHEY_DUPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
                 
                 # if writer.isOpened(): writer.write(frame)
                 
