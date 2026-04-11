@@ -2,6 +2,13 @@ import cv2
 import json
 import numpy as np
 import os
+import ctypes
+
+# 1. High-DPI Awareness (Windows ekran ölçeklendirme düzeltmesi)
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+except Exception:
+    pass
 
 class ZoneDrawer:
     """
@@ -124,7 +131,7 @@ class ZoneDrawer:
 
     def run(self):
         """Executes the main visualization loop."""
-        cv2.namedWindow(self.window_name)
+        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
         cv2.setMouseCallback(self.window_name, self.mouse_callback)
         
         print("\n" + "="*40)

@@ -1,23 +1,55 @@
 # Python
 __pycache__/
-*.pyc
-.env
-.venv/
-venv/
-ENV/
-env/
+*.py[cod]
+*$py.class
+*.so
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# IDE
-.vscode/
-.idea/
-.vs/
+# Video
+*.mp4
+*.avi
+*.mkv
+*.mov
 
-# Traffic tracking specific data
-data/*.mp4
-data/*.avi
-data/*.mkv
+# AI Models & Engines (Very large files)
 models/*.engine
 models/*.pt
 models/*.onnx
-reports/*.csv
-*.log
+*.engine
+*.pt
+*.onnx
+
+# Data & Config
+scratch/
+test_module9.py
+deneme*.csv
+*.csv
+*deneme*
+.gemini/
+
+# Visual Studio Code & IDEs
+.vscode/
+.idea/
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/

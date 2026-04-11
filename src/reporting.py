@@ -105,23 +105,24 @@ class VehicleRoute:
     def complete(self) -> bool:
         """
         Rotayı tamamlar. 
-        Kural: Origin dışındaki, >= 5 frame görülmüş en güncel bölge Destination seçilir.
+        Virtual Line Kuralı: Origin'den FARKLI en az 1 kapıdan geçilmiş olmalı.
+        Birden fazla aday varsa kronolojik en güncel olanı Destination seçilir.
         """
         if self.entry_zone is None:
             return False
 
-        # --- 3. DESTINATION SEÇİMİ VE GÜRÜLTÜ FİLTRESİ ---
+        # --- DESTINATION SEÇİMİ ---
         potential_destinations = []
         
         for zone, count in self.zone_counts.items():
-            # Origin ile aynı olamaz VE en az 5 frame şartı
-            if zone != self.entry_zone and count >= 5:
+            # Origin ile aynı olamaz VE en az 1 kez geçilmiş olmalı
+            if zone != self.entry_zone and count >= 1:
                 potential_destinations.append(zone)
         
         if not potential_destinations:
-            return False # 5 frame şartını sağlayan hedef yoksa raporlama
+            return False  # Sadece tek kapıdan geçenler raporlanmaz
 
-        # 5 frame şartını sağlayanlar arasından kronolojik EN GÜNCEL olanı seç
+        # Adaylar arasından kronolojik EN GÜNCEL olanı seç
         self.exit_zone = max(potential_destinations, key=lambda z: self.zone_last_seen[z])
         self.is_completed = True
         return True
@@ -132,7 +133,7 @@ class VehicleRoute:
 
     def get_route_string(self) -> str:
         """Tam rotayı string olarak döndürür."""
-        return " → ".join(self.route)
+        return " -> ".join(self.route)
 
 class VehicleTracker:
     """Tüm araçların ömür döngüsünü ve bölge geçişlerini yönetir."""
@@ -140,7 +141,12 @@ class VehicleTracker:
         self.config = config
         self.active_vehicles: Dict[int, VehicleRoute] = {}
         self.type_stats: Dict[int, Dict[str, float]] = {} # ID -> {type: total_conf}
+        self.last_seen_frame: Dict[int, int] = {} # ID -> frame_id
         self.total_vehicles_seen = 0
+
+    def update_liveness(self, object_id: int, frame_id: int) -> None:
+        """Her frame'de aracin hala ekranda oldugunu kaydeder."""
+        self.last_seen_frame[object_id] = frame_id
 
     def update_zone(self, object_id: int, zone_name: Optional[str], frame_id: int = 0) -> None:
         if zone_name is None:
@@ -153,25 +159,26 @@ class VehicleTracker:
         self.active_vehicles[object_id].add_zone(zone_name, frame_id)
 
     def update_type_score(self, object_id: int, vehicle_type: str, confidence: float) -> None:
-        """En güvenilir araç tipini belirlemek için %70 üzeri skorları toplayarak hesap tutar."""
+        """En güvenilir araç tipini belirlemek için ayarlanan eşik (örn: %75) üzeri skorları toplayarak hesap tutar."""
         if object_id not in self.type_stats:
             self.type_stats[object_id] = {'high_conf': {}, 'all': {}}
             
-        # 1. Eger confidence %70 üzerinde ise, bu gercek ve kaliteli bir despıt tespittir.
-        # Formul geregi: Toplam Skor = Frame Sayisi x Confidence degerlerinin kümülatif toplamı
-        if confidence >= 0.70:
+        vote_threshold = getattr(self.config, 'class_vote_threshold', 0.75)
+            
+        # 1. Eger confidence esik degerin üzerinde ise, bu gercek ve kaliteli bir despıt tespittir.
+        if confidence >= vote_threshold:
             self.type_stats[object_id]['high_conf'][vehicle_type] = self.type_stats[object_id]['high_conf'].get(vehicle_type, 0) + confidence
         
-        # 2. Her ihtimale karsi (hicbiri 0.70 uzeri cikmazsa fallback icin) normal listeyi de tut
+        # 2. Her ihtimale karsi (hicbiri esik uzeri cikmazsa fallback icin) normal listeyi de tut
         self.type_stats[object_id]['all'][vehicle_type] = self.type_stats[object_id]['all'].get(vehicle_type, 0) + confidence
 
     def get_best_type(self, object_id: int) -> str:
-        """Önce %70 üzeri kesin kayıtlara bakar, en yüksek toplam skoru alana galibiyeti verir."""
+        """Önce eşik üzeri kesin kayıtlara bakar, en yüksek toplam skoru alana galibiyeti verir."""
         if object_id in self.type_stats:
             high_scores = self.type_stats[object_id]['high_conf']
             fallback_scores = self.type_stats[object_id]['all']
             
-            # Eğer %70 üzeri tek bir tespiti dahi varsa, o gruba ait skor liderini sec!
+            # Eğer eşik üzeri tek bir tespiti dahi varsa, o gruba ait skor liderini sec!
             if high_scores:
                 return max(high_scores, key=high_scores.get)
             # Arac 100 frame boyunca gozuktu ama asla 0.70 skoruna cikamadiysa (sis, karanlik vs)
@@ -180,14 +187,15 @@ class VehicleTracker:
                 
         return "Bilinmiyor"
 
-    def get_completed_routes(self, current_active_ids: List[int]) -> List[VehicleRoute]:
-        """Ekrandan kaybolan araçların rotalarını döndürür ve temizler."""
+    def get_completed_routes(self, current_frame: int, stale_buffer: int = 200) -> List[VehicleRoute]:
+        """Ekrandan tamamen kaybolan (stale olan) araçların rotalarını döndürür ve temizler."""
         completed = []
         ids_to_remove = []
         
         for tid, route in self.active_vehicles.items():
-            if tid not in current_active_ids:
-                # Araç artık ekranda değilse
+            last_seen = self.last_seen_frame.get(tid, 0)
+            if current_frame - last_seen > stale_buffer:
+                # Araç tamamen ekrandan çıktı (stale oldu)
                 if route.complete():
                     route.vehicle_type = self.get_best_type(tid)
                     completed.append(route)
@@ -196,6 +204,7 @@ class VehicleTracker:
         for tid in ids_to_remove:
             if tid in self.active_vehicles: del self.active_vehicles[tid]
             if tid in self.type_stats: del self.type_stats[tid]
+            if tid in self.last_seen_frame: del self.last_seen_frame[tid]
             
         return completed
 
@@ -290,8 +299,8 @@ class ReportGenerator:
         """
         print("\n[INFO] Video sonlandi. Yarim kalan rotalar kapatiliyor...")
         
-        # Tracker'a 'ekranda hicbir target yok ([])' diyerek aktiflerin hepsini bitirt.
-        flushed_routes = tracker.get_completed_routes([])
+        # Tracker'a cok yuksek bir frame yollayip butun aktif araclari (stale) hale getirip bitirt.
+        flushed_routes = tracker.get_completed_routes(current_frame=9999999, stale_buffer=0)
         for route in flushed_routes:
             self.add_route(route)
             print(f"[FLUSH TAMAMLANDI] {route.get_report()}")

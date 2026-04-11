@@ -1,5 +1,6 @@
 import logging
-from typing import Dict, List, Optional, Any, Tuple
+from collections import deque
+from typing import Dict, Deque, List, Optional, Any, Tuple
 
 # Logging setup for StateMemory
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -17,6 +18,10 @@ class StateMemory:
     - destination = latest zone different from origin (continuously updated)
     """
 
+    # Yörünge (Trajectory) Hafızası Parametreleri
+    TRAJECTORY_MAXLEN: int = 30       # Her track için tutulacak max bottom-center noktası
+    STALE_BUFFER_DEFAULT: int = 200   # Bu kadar frame kaybolursa trajectory temizlenir
+
     def __init__(self, min_confidence: float = 0.65):
         self.min_confidence = min_confidence
         # Structure: {
@@ -32,13 +37,18 @@ class StateMemory:
         #   }
         # }
         self.tracks: Dict[int, Dict[str, Any]] = {}
-        logger.info(f"StateMemory initialized with min_confidence={min_confidence}")
+        
+        # Yörünge Hafızası: {track_id: deque([(cx, cy), ...], maxlen=30)}
+        self.trajectory_history: Dict[int, Deque[Tuple[int, int]]] = {}
+        
+        logger.info(f"StateMemory initialized with min_confidence={min_confidence}, trajectory_maxlen={self.TRAJECTORY_MAXLEN}")
 
     def update_track(self, frame_id: int, track_id: int, class_id: int, conf: float, bbox: List[float]) -> None:
         """
         Updates track data. 
         CRITICAL: last_seen_frame is ALWAYS updated (even for low confidence).
         Class voting only happens above min_confidence threshold.
+        Trajectory (bottom-center) is ALWAYS appended.
         """
         if track_id not in self.tracks:
             # Initialize new track
@@ -55,6 +65,9 @@ class StateMemory:
             }
             # Always count first detection for voting regardless of confidence
             self.tracks[track_id]["class_scores"][class_id] = conf
+            
+            # Yörünge hafızası başlat
+            self.trajectory_history[track_id] = deque(maxlen=self.TRAJECTORY_MAXLEN)
         else:
             track = self.tracks[track_id]
             # ALWAYS update liveness — this prevents premature stale detection
@@ -65,6 +78,13 @@ class StateMemory:
             if conf >= self.min_confidence:
                 scores = track["class_scores"]
                 scores[class_id] = scores.get(class_id, 0.0) + conf
+        
+        # --- Yörünge (Trajectory) Güncelleme ---
+        # Bottom-center noktası: (cx, y2)
+        x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
+        cx = int((x1 + x2) / 2)
+        cy = int(y2)  # Alt-orta (araç tekerlek hizası)
+        self.trajectory_history[track_id].append((cx, cy))
 
     def update_zone(self, track_id: int, zone_name: str) -> None:
         """
@@ -117,11 +137,31 @@ class StateMemory:
         return stale_ids
 
     def delete_track(self, track_id: int) -> bool:
-        """Removes a track from memory."""
+        """Removes a track and its trajectory from memory."""
         if track_id in self.tracks:
             del self.tracks[track_id]
+            self.trajectory_history.pop(track_id, None)
             return True
         return False
+
+    def get_trajectory(self, track_id: int) -> List[Tuple[int, int]]:
+        """Returns the trajectory history for a given track as a list of (cx, cy) points."""
+        if track_id in self.trajectory_history:
+            return list(self.trajectory_history[track_id])
+        return []
+
+    def cleanup_stale_trajectories(self, current_frame: int, buffer: int = 200) -> List[int]:
+        """
+        200 frame boyunca görülmeyen araçların yörünge hafızasını temizler.
+        Returns: Temizlenen track_id listesi.
+        """
+        cleaned = []
+        stale_ids = self.get_stale_tracks(current_frame, buffer)
+        for track_id in stale_ids:
+            if track_id in self.trajectory_history:
+                del self.trajectory_history[track_id]
+                cleaned.append(track_id)
+        return cleaned
 
     def get_track_summary(self, track_id: int) -> Optional[Dict]:
         """Get a snapshot of track data for reporting."""
@@ -135,7 +175,8 @@ class StateMemory:
             "touched_zones": list(td["touched_zones"]),
             "start_frame": td["start_frame"],
             "last_seen_frame": td["last_seen_frame"],
-            "final_class": self.get_final_class(track_id)
+            "final_class": self.get_final_class(track_id),
+            "trajectory": self.get_trajectory(track_id)
         }
 
 
@@ -162,3 +203,25 @@ if __name__ == "__main__":
     print(f"Stale at frame 140 (gap=90): {memory.get_stale_tracks(140, buffer=90)}")
     # At frame 141, gap = 91 → STALE
     print(f"Stale at frame 141 (gap=91): {memory.get_stale_tracks(141, buffer=90)}")
+
+    # --- Trajectory Tests ---
+    print(f"\n--- Trajectory Tests ---")
+    traj = memory.get_trajectory(42)
+    print(f"Track 42 trajectory ({len(traj)} pts): {traj}")
+    # Beklenen: 2 nokta — bbox [10,10,50,50] → (30, 50), bbox [100,100,150,150] → (125, 150)
+    assert traj == [(30, 50), (125, 150)], f"FAIL: {traj}"
+    print("Trajectory assertion PASSED")
+
+    # Simulate many updates to test maxlen=30
+    for i in range(40):
+        memory.update_track(frame_id=100+i, track_id=42, class_id=3, conf=0.90,
+                           bbox=[i*10, i*10, i*10+40, i*10+40])
+    traj2 = memory.get_trajectory(42)
+    print(f"After 42 total updates, trajectory length: {len(traj2)} (maxlen={memory.TRAJECTORY_MAXLEN})")
+    assert len(traj2) == memory.TRAJECTORY_MAXLEN, f"FAIL: expected {memory.TRAJECTORY_MAXLEN}, got {len(traj2)}"
+    print("Maxlen assertion PASSED")
+
+    # Stale trajectory cleanup
+    cleaned = memory.cleanup_stale_trajectories(current_frame=500, buffer=200)
+    print(f"Cleaned stale trajectories: {cleaned}")
+    print(f"Track 42 trajectory after cleanup: {memory.get_trajectory(42)}")

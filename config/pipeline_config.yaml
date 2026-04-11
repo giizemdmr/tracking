@@ -7,7 +7,7 @@ tracker_type: botsort
 track_high_thresh: 0.50
 track_low_thresh: 0.1
 new_track_thresh: 0.6
-track_buffer: 60
+track_buffer: 100
 match_thresh: 0.80
 fuse_score: True
 gmc_method: none
@@ -27,21 +27,23 @@ yolo:
 tracking:
   kalman_drop_height_ratio: 0.80
   kalman_rescue_conf: 0.40
-  stale_buffer: 200
+  stale_buffer: 20
   zone_entry_frames: 3
   zone_change_frames: 5
   min_route_zone_duration: 15
+  class_vote_threshold: 0.80
 
 # 4. PIPELINE DONANIM & I/O PARAMETRELERI
 pipeline:
-  video_path: "C:\\Users\\W11\\Videos\\2026-04-10 12-07-48.mp4"
+  video_path: "D:\\deneme2.mp4"
   model_path: "D:\\tracking\\models\\yolov8.engine"
   regions_file: "config/zones.json"
-  excel_filename: "trafik_raporu_yogunburc3.csv"
+  lines_file: "config/lines.json"
+  excel_filename: "deneme5.csv"
   vid_stride: 2
   queue_timeout: 5.0
   display_scale: 1.0
-  headless_mode: false
+  headless_mode: true
 
 
 # 5. ARAC RENKLERI (BGR formatinda)

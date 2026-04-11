@@ -18,12 +18,14 @@ class TrackingConfig:
     zone_entry_frames: Optional[int] = None
     zone_change_frames: Optional[int] = None
     min_route_zone_duration: Optional[int] = None
+    class_vote_threshold: Optional[float] = 0.75
 
 @dataclass
 class PipelineConfig:
     video_path: Optional[str] = None
     model_path: Optional[str] = None
     regions_file: Optional[str] = None
+    lines_file: Optional[str] = None
     excel_filename: Optional[str] = None
     vid_stride: Optional[int] = None
     queue_timeout: Optional[float] = None
@@ -93,6 +95,9 @@ class ConfigManager:
     def regions_file(self) -> str: return self._config.pipeline.regions_file
     
     @property
+    def lines_file(self) -> str: return self._config.pipeline.lines_file
+    
+    @property
     def excel_filename(self) -> str: return self._config.pipeline.excel_filename
     
     @property
@@ -109,6 +114,9 @@ class ConfigManager:
     
     @property
     def min_route_zone_duration(self) -> int: return self._config.tracking.min_route_zone_duration
+    
+    @property
+    def class_vote_threshold(self) -> float: return self._config.tracking.class_vote_threshold
 
     def get_vehicle_color(self, vehicle_type: str) -> tuple:
         """Arac tipine gore BGR renk dondurur. (Kucuk/buyuk harf duyarsiz)"""

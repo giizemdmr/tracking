@@ -1,4 +1,7 @@
-opencv-python
+ultralytics>=8.1.0
+opencv-python-headless>=4.8.0
+shapely>=2.0.0
+openpyxl>=3.1.0
+PyYAML>=6.0
 numpy
-ultralytics
-shapely
+tensorrt
