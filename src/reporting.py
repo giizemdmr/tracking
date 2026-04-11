@@ -12,6 +12,7 @@ from openpyxl.styles import Font, PatternFill
 from datetime import datetime
 from typing import List, Dict, Any, Tuple, Optional
 import os
+import math
 
 
 
@@ -158,19 +159,34 @@ class VehicleTracker:
             
         self.active_vehicles[object_id].add_zone(zone_name, frame_id)
 
-    def update_type_score(self, object_id: int, vehicle_type: str, confidence: float) -> None:
-        """En güvenilir araç tipini belirlemek için ayarlanan eşik (örn: %75) üzeri skorları toplayarak hesap tutar."""
+    def update_type_score(self, object_id: int, vehicle_type: str, confidence: float, bbox: List[int] = None) -> None:
+        """
+        Scale-Aware (Alan Agirlikli) Sınıf Oylama Mekanizması.
+        
+        Aracın güven skoru (confidence) ile bounding box alanını harmanlayarak bir ağırlık hesaplar.
+        Büyük alanlı (kameraya yakın) ve yüksek güvenli tespitler oylamada daha etkili olur.
+        """
         if object_id not in self.type_stats:
             self.type_stats[object_id] = {'high_conf': {}, 'all': {}}
             
+        # Merkezi konfigürasyondan eşik değerini çek (0.75 varsayılan)
         vote_threshold = getattr(self.config, 'class_vote_threshold', 0.75)
             
-        # 1. Eger confidence esik degerin üzerinde ise, bu gercek ve kaliteli bir despıt tespittir.
+        # 1. Alan Ağırlıklı (Scale-Aware) Ağırlık Hesaplama
+        weight = confidence
+        if bbox is not None and len(bbox) >= 4:
+            x1, y1, x2, y2 = bbox
+            area = abs(x2 - x1) * abs(y2 - y1)
+            # Pikselleri normalize et ve karekök sönümlendirmesi uygula (Scale-Aware Math)
+            norm_area = area / 10000.0
+            weight = confidence * math.sqrt(norm_area)
+
+        # 2. Eşik Değer Kontrolü (Kaliteli Tespit Filtresi)
         if confidence >= vote_threshold:
-            self.type_stats[object_id]['high_conf'][vehicle_type] = self.type_stats[object_id]['high_conf'].get(vehicle_type, 0) + confidence
+            self.type_stats[object_id]['high_conf'][vehicle_type] = self.type_stats[object_id]['high_conf'].get(vehicle_type, 0.0) + weight
         
-        # 2. Her ihtimale karsi (hicbiri esik uzeri cikmazsa fallback icin) normal listeyi de tut
-        self.type_stats[object_id]['all'][vehicle_type] = self.type_stats[object_id]['all'].get(vehicle_type, 0) + confidence
+        # 3. Fallback Listesi (Basit kümülatif toplama devam eder)
+        self.type_stats[object_id]['all'][vehicle_type] = self.type_stats[object_id]['all'].get(vehicle_type, 0.0) + confidence
 
     def get_best_type(self, object_id: int) -> str:
         """Önce eşik üzeri kesin kayıtlara bakar, en yüksek toplam skoru alana galibiyeti verir."""

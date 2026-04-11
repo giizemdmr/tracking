@@ -1,30 +1,30 @@
 #!/bin/bash
 # ==========================================
-# TRAFFIC PIPELINE - LINUX/VAST.AI SETUP
+# TRAFFIC PIPELINE - LINUX/VAST.AI ZERO-TOUCH SETUP
 # ==========================================
 
-echo "[INFO] Sistemi güncelliyorum..."
+echo "[INFO] Klasor yapisi hazirlaniyor..."
+mkdir -p models
+
+echo "[INFO] Sistem kutuphaneleri kuruluyor..."
 apt-get update && apt-get install -y libgl1-mesa-glx libglib2.0-0 zip unzip tmux
 
-echo "[INFO] Gerekli Python kütüphanelerini kuruyorum..."
+echo "[INFO] Python bagimliliklari yukleniyor..."
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install gdown opencv-python-headless ultralytics shapely openpyxl PyYAML numpy
+pip install nvidia-tensorrt==8.6.1
 
-# Eger kosede opencv-python kaldiysa kaldirip headless kuralim (Sunucuda cokmesini onler)
-pip uninstall -y opencv-python opencv-python-headless
-pip install opencv-python-headless
+echo "[INFO] Video dosyasi Drive'dan cekiliyor..."
+gdown 1wEsuJAP7rF9ocwTb-SAlmxspjvq9d-zy -O deneme2.mp4
 
-echo "[INFO] TensorRT kutuphanelerini kuruyorum (YOLO hizlandirma icin)..."
-pip install tensorrt
+# Kutuphane uyuşmazlığını önlemek için yolu dışa aktar
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/x86_64-linux-gnu
 
 echo "=========================================="
-echo "[BAŞARILI] Kurulum tamamlandi!"
+echo "[BASARILI] Kurulum ve Video Indirme Tamamlandi!"
 echo ""
-echo "!!! ÇOK ÖNEMLİ TENSORRT UYARISI !!!"
-echo "Windows'ta kullandiginiz 'yolov8.engine' dosyasi Linux sunucuda CALISMAZ!"
-echo "Lutfen 'yolov8.pt' (orijinal pytorch modelinizi) sunucuya yukleyin ve asagidaki kodu calistirin:"
-echo ""
-echo "   yolo export model=models/yolov8.pt format=engine half=True"
-echo ""
-echo "Bu komut sunucudaki ekran kartina (Orn: RTX 4090) ozel yeni bir .engine dosyasi uretir."
+echo "SIRADAKI ADIMLAR:"
+echo "1. 'best.pt' modelinizi 'models/' klasorune kopyalayin."
+echo "2. 'yolo export model=models/best.pt format=engine half=True' komutunu calistirin."
+echo "3. 'python main.py' ile sistemi ucurun."
 echo "=========================================="

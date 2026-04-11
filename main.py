@@ -297,7 +297,7 @@ class ResultProcessor(threading.Thread):
                             if crossed_gate:
                                 self.vehicle_tracker.update_zone(tid, crossed_gate, self.total_processed_frames)
                         
-                        self.vehicle_tracker.update_type_score(tid, class_name, float(conf))
+                        self.vehicle_tracker.update_type_score(tid, class_name, float(conf), bbox=[x1, y1, x2, y2])
 
 
                         # OpenCV Arac Renkleri

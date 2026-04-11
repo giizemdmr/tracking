@@ -31,7 +31,7 @@ tracking:
   zone_entry_frames: 3
   zone_change_frames: 5
   min_route_zone_duration: 15
-  class_vote_threshold: 0.80
+  class_vote_threshold: 0.75
 
 # 4. PIPELINE DONANIM & I/O PARAMETRELERI
 pipeline:
@@ -39,7 +39,7 @@ pipeline:
   model_path: "models/best.pt"
   regions_file: "config/zones.json"
   lines_file: "config/lines.json"
-  excel_filename: "deneme5.csv"
+  excel_filename: "deneme6.csv"
   vid_stride: 2
   queue_timeout: 5.0
   display_scale: 1.0
