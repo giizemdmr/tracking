@@ -409,7 +409,10 @@ class ResultProcessor(threading.Thread):
             self.report_generator.save_final_report(self.vehicle_tracker)
             self.report_generator.print_statistics(self.total_processed_frames, self.vehicle_tracker.total_vehicles_seen)
             # if writer.isOpened(): writer.release()
-            cv2.destroyAllWindows()
+            
+            # Headless modda pencere kapatma hatasini onle
+            if not headless:
+                cv2.destroyAllWindows()
 
 
 def start_pipeline() -> None:
