@@ -307,11 +307,12 @@ class ResultProcessor(threading.Thread):
                         if tid in self.trajectories and len(self.trajectories[tid]) > 1:
                             pts = np.array(self.trajectories[tid], np.int32)
                             pts = pts.reshape((-1, 1, 2))
-                            cv2.polylines(frame, [pts], isClosed=False, color=(b, g, r), thickness=2, lineType=cv2.LINE_AA)
+                            cv2.polylines(frame, [pts], isClosed=False, color=(b, g, r), thickness=1, lineType=cv2.LINE_AA)
                         
-                        # Sirf Noktasal Isaretleme (FPS max)
-                        cv2.circle(frame, (cx, cy), 5, (b, g, r), -1, lineType=cv2.LINE_AA)
-                        cv2.circle(frame, (cx, cy), 5, (0, 0, 0), 1, lineType=cv2.LINE_AA)
+                        # Modern Noktasal İşaretleme (Minimalist & Glow)
+                        cv2.circle(frame, (cx, cy), 4, (b, g, r), -1, lineType=cv2.LINE_AA)    # Arka Plan Rengi
+                        cv2.circle(frame, (cx, cy), 2, (255, 255, 255), -1, lineType=cv2.LINE_AA) # Beyaz Çekirdek (Modern Glow)
+                        cv2.circle(frame, (cx, cy), 4, (0, 0, 0), 1, lineType=cv2.LINE_AA)    # İnce Siyah Kontür
 
                         # Minimalist ID, Tur ve Guven Skoru Cizimi
                         label = f"{class_name} %{int(conf*100)}"

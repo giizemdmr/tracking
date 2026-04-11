@@ -42,7 +42,7 @@ pipeline:
   vid_stride: 2
   queue_timeout: 5.0
   display_scale: 1.0
-  headless_mode: true
+  headless_mode: false
 
 
 # 5. ARAC RENKLERI (BGR formatinda)
