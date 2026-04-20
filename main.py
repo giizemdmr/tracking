@@ -45,8 +45,15 @@ class VideoReader(threading.Thread):
             self.stop_event.set()
             return
         self.fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        self.width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
-        self.height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
+        
+        # --- 1024 SCALE INITIALIZATION ---
+        orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
+        orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
+        self.width = 1024
+        self.height = int(orig_h * (self.width / orig_w))
+        print(f"[*] Video Pipe 1024 olcegine sabitlendi: {self.width}x{self.height}")
+        # ----------------------------------
+        
         self.total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
         cap.release()
 
@@ -67,6 +74,10 @@ class VideoReader(threading.Thread):
                 frame_count += 1
                 if frame_count % stride != 0:
                     continue
+                
+                # --- 1024 SCALE RESIZE ---
+                if frame.shape[1] != self.width:
+                    frame = cv2.resize(frame, (self.width, self.height), interpolation=cv2.INTER_AREA)
                 
                 while not self.stop_event.is_set():
                     try:
@@ -169,8 +180,22 @@ class ResultProcessor(threading.Thread):
         self.start_time = None  # İlk kare gelene kadar başlatma
         self.current_fps = 0.0
 
+        # Zone (ROI) Yukle
+        self.zone_polygon = None
+        zone_path = self.config.pipeline.zone_file or os.path.join("config", "zone.json")
+        if os.path.exists(zone_path):
+            try:
+                with open(zone_path, 'r', encoding='utf-8') as f:
+                    zone_data = json.load(f)
+                    pts = zone_data.get("points", [])
+                    if len(pts) >= 3:
+                        self.zone_polygon = np.array(pts, np.int32)
+                        print(f"[OK] ROI (Zone) yuklendi: {zone_path}")
+            except Exception as e:
+                print(f"[ERROR] Zone yuklenemedi: {e}")
+
         # Raporlama ve Loglama (Yeni Line/Gate Mimarisi)
-        lines_path = os.path.join("config", "lines.json")
+        lines_path = self.config.pipeline.lines_file or os.path.join("config", "lines.json")
         self.line_analyzer = LineAnalyzer(lines_path) if os.path.exists(lines_path) else None
         self.vehicle_tracker = VehicleTracker(self.config)
         self.report_generator = ReportGenerator(self.config)
@@ -183,7 +208,7 @@ class ResultProcessor(threading.Thread):
         self.line_overlay = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         self.lines_data = []  # [{"name": ..., "points": [[x1,y1],[x2,y2]]}, ...]
         
-        lines_path = os.path.join("config", "lines.json")
+        lines_path = self.config.pipeline.lines_file or os.path.join("config", "lines.json")
         if os.path.exists(lines_path):
             try:
                 with open(lines_path, 'r', encoding='utf-8') as f:
@@ -224,6 +249,11 @@ class ResultProcessor(threading.Thread):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3, cv2.LINE_AA)  # Shadow
             cv2.putText(self.line_overlay, name, (mid_pt[0] - 30, mid_pt[1] - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)       # Text
+        
+        # ROI (Zone) cizimi (Cok ince ve gri - Kullanici istegi)
+        if self.zone_polygon is not None:
+            cv2.polylines(self.line_overlay, [self.zone_polygon.reshape((-1, 1, 2))], 
+                          isClosed=True, color=(80, 80, 80), thickness=1, lineType=cv2.LINE_AA)
         
         self.line_mask = np.any(self.line_overlay > 0, axis=-1)
         # ---------------------------------
@@ -271,13 +301,22 @@ class ResultProcessor(threading.Thread):
                     
                     for coord, track_id, cls_id, conf in zip(coords, track_ids, class_ids, confidences):
                         x1, y1, x2, y2 = map(int, coord)
-                        tid = int(track_id)
-                        cid = int(cls_id)
-                        class_name = model_names.get(cid, "Arac")
                         
                         # -- Virtual Line / Gate Kesisim Analizi --
                         cx = (x1 + x2) // 2
                         cy = y2  # Bottom-center (arac tekerlek hizasi)
+                        
+                        # --- ROI (Zone) Filtreleme ---
+                        if self.zone_polygon is not None:
+                            # Aracın tekerlek hizasındaki orta noktası bölge içinde mi?
+                            is_inside = cv2.pointPolygonTest(self.zone_polygon, (float(cx), float(cy)), False)
+                            if is_inside < 0:
+                                continue # Bölge dışında, takip etme ve sayma
+                        # ----------------------------
+
+                        tid = int(track_id)
+                        cid = int(cls_id)
+                        class_name = model_names.get(cid, "Arac")
                         
                         # Yorunge hafizasini guncelle
                         if tid not in self.trajectories:

@@ -38,6 +38,7 @@ scratch/
 test_module9.py
 deneme*.csv
 *.csv
+*.xlsx
 *deneme*
 .gemini/
 

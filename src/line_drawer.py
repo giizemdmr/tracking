@@ -41,6 +41,14 @@ class LineDrawer:
         self.mouse_pos = None     # Canli onizleme icin anlık imleç pozisyonu
         self.window_name = "LineDrawer - Virtual Gate Setup"
         
+        # --- ROI (Zone) Support ---
+        self.draw_mode = "GATE"   # "GATE" veya "ZONE"
+        self.zone_data = None     # {"points": [[x1,y1], ...]}
+        # --------------------------
+        
+        # --- AUTO LOAD EXISTING ---
+        self._load_existing_data()
+        
         # Colors (BGR)
         self.entry_color = (0, 255, 100)    # Giris kapilari: Yesil
         self.exit_color = (0, 80, 255)      # Cikis kapilari: Kirmizi
@@ -48,8 +56,29 @@ class LineDrawer:
         self.preview_color = (0, 255, 255)  # Onizleme: Sari
         self.point_color = (0, 0, 255)      # Nokta: Kirmizi
 
+    def _load_existing_data(self):
+        """Mevcut config dosyalarindan cizimleri yukler."""
+        try:
+            from src.config_manager import config_manager
+            
+            # Lines yukle
+            lp = config_manager.lines_file or "config/lines.json"
+            if os.path.exists(lp):
+                with open(lp, 'r', encoding='utf-8') as f:
+                    self.lines = json.load(f)
+                print(f"[OK] Mevcut {len(self.lines)} kapi yuklendi.")
+            
+            # Zone yukle
+            zp = config_manager.zone_file or "config/zone.json"
+            if os.path.exists(zp):
+                with open(zp, 'r', encoding='utf-8') as f:
+                    self.zone_data = json.load(f)
+                print(f"[OK] Mevcut ROI (Zone) yuklendi.")
+        except Exception as e:
+            print(f"[WARNING] Mevcut veriler yuklenirken hata olustu: {e}")
+
     def _get_specific_frame(self, index: int):
-        """Reads a specific frame from the input video."""
+        """Reads a specific frame from the input video and resizes it to 1024 width."""
         cap = cv2.VideoCapture(self.video_path)
         if not cap.isOpened():
             raise ValueError(f"Could not open video: {self.video_path}")
@@ -60,6 +89,14 @@ class LineDrawer:
         
         if not ret:
             raise ValueError(f"Could not read frame {index} from: {self.video_path}")
+        
+        # --- 1024 SCALE CORRECTION ---
+        orig_h, orig_w = frame.shape[:2]
+        target_w = 1024
+        target_h = int(orig_h * (target_w / orig_w))
+        frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        print(f"[*] Kare 1024 olcegine resize edildi: {orig_w}x{orig_h} -> {target_w}x{target_h}")
+        # -----------------------------
         
         return frame
 
@@ -91,20 +128,39 @@ class LineDrawer:
         elif event == cv2.EVENT_MOUSEMOVE:
             self.mouse_pos = (x, y)
 
-    def save_lines(self, output_path: str = "config/lines.json"):
-        """Saves all defined lines/gates to a JSON file."""
-        if not self.lines:
-            print("[WARNING] Henuz hicbir kapi tanimlanmadi. Kaydedilecek sey yok.")
+    def save_lines(self, output_path: str = None):
+        """Saves all defined lines/gates and the zone to JSON files."""
+        if self.current_points:
+            print("\n[HATA] Hala cizilmekte olan noktalar var! Lutfen 'Enter' ile cizimi onaylayin, sonra 's' ile kaydedin.")
             return
 
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        from src.config_manager import config_manager
         
+        # 1. Gates (Lines) Kaydi
+        if output_path is None:
+            output_path = config_manager.lines_file or "config/lines.json"
+        
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
         try:
             with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(self.lines, f, indent=4)
-            print(f"[OK] {len(self.lines)} kapi '{output_path}' dosyasina kaydedildi.")
+            print(f"\n[OK] {len(self.lines)} kapi '{output_path}' dosyasina kaydedildi.")
         except Exception as e:
-            print(f"[ERROR] Kayit basarisiz: {e}")
+            print(f"[ERROR] Gate kayit basarisiz: {e}")
+
+        # 2. Zone (ROI) Kaydi
+        zone_path = config_manager.zone_file or "config/zone.json"
+        if self.zone_data:
+            os.makedirs(os.path.dirname(zone_path), exist_ok=True)
+            try:
+                with open(zone_path, 'w', encoding='utf-8') as f:
+                    json.dump(self.zone_data, f, indent=4)
+                print(f"[OK] ROI (Zone) '{zone_path}' dosyasina kaydedildi.")
+            except Exception as e:
+                print(f"[ERROR] Zone kayit basarisiz: {e}")
+        else:
+            print("[INFO] Kaydedilecek Zone yok.")
+
 
     def _draw_overlay(self):
         """Refreshes the display frame with all annotations."""
@@ -132,24 +188,42 @@ class LineDrawer:
             # Isim etiketi (ilk veya orta noktaya yakin bir yere yazalim)
             mid_idx = len(pts) // 2
             label_pos = (pts[mid_idx][0] - 30, pts[mid_idx][1] - 12)
-            cv2.putText(canvas, name, label_pos, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3, cv2.LINE_AA)
             cv2.putText(canvas, name, label_pos, cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
         
+        # 1.1. Kayitli Zone'u ciz
+        if self.zone_data and self.zone_data.get("points"):
+            zpts = np.array(self.zone_data["points"], np.int32).reshape((-1, 1, 2))
+            cv2.polylines(canvas, [zpts], isClosed=True, color=(150, 150, 150), thickness=2, lineType=cv2.LINE_AA)
+            cv2.putText(canvas, "ZONE (ROI)", (self.zone_data["points"][0][0], self.zone_data["points"][0][1] - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1, cv2.LINE_AA)
+
         # 2. O an cizilmekte olan noktalar (Onizleme)
         if self.current_points:
+            color = self.point_color if self.draw_mode == "GATE" else (255, 100, 0) # Zone icin Turuncu
             np_curr = np.array(self.current_points, np.int32).reshape((-1, 1, 2))
-            cv2.polylines(canvas, [np_curr], isClosed=False, color=self.point_color, thickness=2, lineType=cv2.LINE_AA)
+            is_closed = True if self.draw_mode == "ZONE" else False
+            cv2.polylines(canvas, [np_curr], isClosed=is_closed, color=color, thickness=2, lineType=cv2.LINE_AA)
             
             for pt in self.current_points:
                 p_tup = tuple(pt)
-                cv2.circle(canvas, p_tup, 8, self.point_color, -1, lineType=cv2.LINE_AA)
+                cv2.circle(canvas, p_tup, 8, color, -1, lineType=cv2.LINE_AA)
                 cv2.circle(canvas, p_tup, 8, (255, 255, 255), 2, lineType=cv2.LINE_AA)
             
-            # Fareye dogru esnek onizleme cizgisi
+            # Fareye dogru esnek onizleme cizgisi (Zone ise son nokta ile ilk noktayi da hayali birlestir)
             if self.mouse_pos is not None:
                 last_pt = tuple(self.current_points[-1])
                 cv2.line(canvas, last_pt, self.mouse_pos, self.preview_color, 2, lineType=cv2.LINE_AA)
+                
+                if self.draw_mode == "ZONE" and len(self.current_points) > 1:
+                    first_pt = tuple(self.current_points[0])
+                    cv2.line(canvas, first_pt, self.mouse_pos, (200, 200, 200), 1, cv2.LINE_AA)
+                
                 cv2.circle(canvas, self.mouse_pos, 5, self.preview_color, -1, lineType=cv2.LINE_AA)
+        
+        # 3. Mod Bilgisi
+        mode_text = f"MODE: {self.draw_mode}"
+        cv2.putText(canvas, mode_text, (20, 40), cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.putText(canvas, mode_text, (20, 40), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 1, cv2.LINE_AA)
         
         # 3. Bilgi paneli (Ekrani kapatmamasi icin kaldirildi)
         # Kisa yollar zaten terminalde gosteriliyor.
@@ -160,11 +234,9 @@ class LineDrawer:
         """Executes the main visualization loop."""
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
         
-        # Ekrani 1024 uzerinden ac (aspect ratio korunur)
-        orig_h, orig_w = self.frame.shape[:2]
-        target_w = 1024
-        target_h = int(orig_h * (target_w / orig_w))
-        cv2.resizeWindow(self.window_name, target_w, target_h)
+        # Frame zaten 1024 oldugu icin direkt gosteriyoruz
+        h, w = self.frame.shape[:2]
+        cv2.resizeWindow(self.window_name, w, h)
         
         cv2.setMouseCallback(self.window_name, self.mouse_callback)
         
@@ -175,9 +247,10 @@ class LineDrawer:
         print("Kontroller:")
         print("  - Sol Tik       : Nokta ekle (istediginiz kadar)")
         print("  - Sag Tik       : Son eklenen noktayi geri al")
-        print("  - 'c' veya Enter: Cizimi tamamla ve isimlendir")
-        print("  - 's'           : config/lines.json'a kaydet")
-        print("  - 'u'           : Son kapiyi geri al (undo)")
+        print("  - 'c' veya Enter: Cizimi tamamla")
+        print("  - 'z'           : GATE / ZONE (ROI) Modu Degistir")
+        print("  - 's'           : Kaydet (config/lines.json ve config/zone.json)")
+        print("  - 'u'           : Son kapiyi/zone'u geri al (undo)")
         print("  - 'q'           : Cik")
         print("=" * 50 + "\n")
 
@@ -190,19 +263,30 @@ class LineDrawer:
             # 'c', 'C' veya 'Enter' (13) — Cizimi bitir
             if key in [ord('c'), ord('C'), 13]:
                 if len(self.current_points) >= 2:
-                    gate_name = input("\nBu kapi icin isim girin (ornek: Giris_1): ").strip()
-                    if not gate_name:
-                        gate_name = f"Gate_{len(self.lines) + 1}"
+                    if self.draw_mode == "GATE":
+                        gate_name = input("\nBu kapi icin isim girin (ornek: Giris_1): ").strip()
+                        if not gate_name:
+                            gate_name = f"Gate_{len(self.lines) + 1}"
+                        
+                        self.lines.append({
+                            "name": gate_name,
+                            "points": list(self.current_points)
+                        })
+                        print(f"[OK] Kapi '{gate_name}' ({len(self.current_points)} nokta) kaydedildi.")
+                    else:
+                        self.zone_data = {"points": list(self.current_points)}
+                        print(f"[OK] ROI (Zone) ({len(self.current_points)} nokta) kaydedildi.")
                     
-                    self.lines.append({
-                        "name": gate_name,
-                        "points": list(self.current_points)
-                    })
-                    print(f"[OK] Kapi '{gate_name}' ({len(self.current_points)} nokta) kaydedildi.")
                     self.current_points = []
                 else:
                     if len(self.current_points) == 1:
-                        print("[WARNING] Bir kapi en az 2 noktadan olusmalidir.")
+                        print("[WARNING] En az 2 nokta gerekli.")
+            
+            # 'z' — Mod Degistir
+            if key == ord('z'):
+                self.draw_mode = "ZONE" if self.draw_mode == "GATE" else "GATE"
+                self.current_points = []
+                print(f"[*] Mod Degistirildi: {self.draw_mode}")
             
             # 's' — Kaydet
             if key == ord('s'):
@@ -210,11 +294,14 @@ class LineDrawer:
             
             # 'u' — Undo (son ciziyi geri al)
             elif key == ord('u'):
-                if self.lines:
+                if self.draw_mode == "GATE" and self.lines:
                     removed = self.lines.pop()
                     print(f"[UNDO] '{removed['name']}' kapisi geri alindi.")
+                elif self.draw_mode == "ZONE" and self.zone_data:
+                    self.zone_data = None
+                    print(f"[UNDO] Zone geri alindi.")
                 else:
-                    print("[UNDO] Geri alinacak kapi yok.")
+                    print("[UNDO] Geri alinacak bir sey yok.")
             
             # 'q' — Cik
             elif key == ord('q'):

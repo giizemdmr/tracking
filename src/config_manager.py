@@ -26,6 +26,7 @@ class PipelineConfig:
     model_path: Optional[str] = None
     regions_file: Optional[str] = None
     lines_file: Optional[str] = None
+    zone_file: Optional[str] = None
     excel_filename: Optional[str] = None
     vid_stride: Optional[int] = None
     queue_timeout: Optional[float] = None
@@ -96,6 +97,9 @@ class ConfigManager:
     
     @property
     def lines_file(self) -> str: return self._config.pipeline.lines_file
+    
+    @property
+    def zone_file(self) -> str: return self._config.pipeline.zone_file
     
     @property
     def excel_filename(self) -> str: return self._config.pipeline.excel_filename
