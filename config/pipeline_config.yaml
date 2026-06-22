@@ -35,11 +35,13 @@ tracking:
 
 # 4. PIPELINE DONANIM & I/O PARAMETRELERI
 pipeline:
-  video_path: "D:/deneme2.mp4"
-  model_path: "D:/script/train_results_v2/weights/best.engine"
-  lines_file: "config/lines1.json"
+  video_path: "D:/2026_0615_073551_006.MP4"
+  #model_path: "D:/script/train_results_v2/weights/best.engine"
+  model_path: "D:/script/2026-06-09_egitim_ciktilari/0906/best.engine"
+  #model_path: "D:/script/2026-06-04_egitim_ciktilari/best.pt"
+  lines_file: "config/lines.json"
   zone_file: "config/zone.json"
-  excel_filename: "bursa2.xlsx"
+  excel_filename: "okulyolu.xlsx"
   vid_stride: 2
   queue_timeout: 5.0
   display_scale: 1.0

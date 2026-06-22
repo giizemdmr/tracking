@@ -1,18 +1,68 @@
 """
 reporting.py - Raporlama ve Analiz Modülü
 Bu modül, araçların bölgeler arası geçişlerini takip eder ve Excel raporu oluşturur.
-D:\\report_generator.py referans alinarak yazilmistir.
 """
 
 import cv2
 import numpy as np
 import json
+import subprocess
 import openpyxl
 from openpyxl.styles import Font, PatternFill
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Tuple, Optional
 import os
 import math
+
+
+def extract_video_start_time(video_path: str) -> Optional[datetime]:
+    """
+    ffprobe ile video dosyasının oluşturulma zamanını çeker.
+    Önce metadata'dan, bulamazsa dosya adından parse etmeye çalışır.
+    
+    Returns:
+        datetime nesnesi veya None
+    """
+    # 1. ffprobe ile metadata'dan çek
+    try:
+        result = subprocess.run(
+            ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_format', video_path],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            tags = data.get('format', {}).get('tags', {})
+            creation_time = tags.get('creation_time') or tags.get('com.apple.quicktime.creationdate')
+            if creation_time:
+                # ISO format: "2026-06-15T07:35:51.000000Z"
+                ct = creation_time.replace('Z', '+00:00')
+                dt = datetime.fromisoformat(ct)
+                # UTC'den yerel saate çevir (Türkiye UTC+3)
+                dt = dt + timedelta(hours=3)
+                print(f"[OK] Video başlangıç zamanı (metadata): {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+                return dt
+    except Exception as e:
+        print(f"[WARNING] ffprobe metadata okunamadı: {e}")
+    
+    # 2. Dosya adından parse et (örnek: 2026_0615_073551_006.MP4)
+    try:
+        basename = os.path.splitext(os.path.basename(video_path))[0]
+        parts = basename.split('_')
+        if len(parts) >= 3 and len(parts[0]) == 4 and len(parts[1]) == 4 and len(parts[2]) == 6:
+            year = int(parts[0])
+            month = int(parts[1][:2])
+            day = int(parts[1][2:])
+            hour = int(parts[2][:2])
+            minute = int(parts[2][2:4])
+            second = int(parts[2][4:])
+            dt = datetime(year, month, day, hour, minute, second)
+            print(f"[OK] Video başlangıç zamanı (dosya adı): {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+            return dt
+    except Exception as e:
+        print(f"[WARNING] Dosya adından zaman parse edilemedi: {e}")
+    
+    print("[WARNING] Video başlangıç zamanı belirlenemedi. Video-göreceli zaman kullanılacak.")
+    return None
 
 class VehicleRoute:
     """Bir aracın izlediği rota (Gate-to-Gate) bilgilerini tutar."""
@@ -20,12 +70,14 @@ class VehicleRoute:
         self.object_id = object_id
         self.config = config
         self.vehicle_type = "Bilinmiyor"
-        self.start_time = datetime.now()
-        self.last_update = datetime.now()
         
         self.entry_gate = None  # Mühürlenmiş Origin Hattı
         self.exit_gate = None   # Son Geçilen Destination Hattı
         self.is_completed = False
+        
+        # Frame-tabanlı zaman damgası
+        self.entry_frame = None  # İlk kapı teması frame numarası
+        self.exit_frame = None   # Son kapı teması frame numarası
         
         # O-D Mantığı Veri Yapıları
         self.gate_counts = {}   # {gate_name: frame_count}
@@ -44,16 +96,17 @@ class VehicleRoute:
         # --- 1. ORIGIN KİLİDİ ---
         if self.entry_gate is None:
             self.entry_gate = gate_name
+            self.entry_frame = frame_id
 
         # --- 2. VERİ TOPLAMA ---
         self.gate_counts[gate_name] = self.gate_counts.get(gate_name, 0) + 1
         self.gate_last_seen[gate_name] = frame_id
+        self.exit_frame = frame_id  # Her temasta güncelle, son temas = çıkış
         
         # Görsel rota dizisi için (ardışık tekrarları önle)
         if not self.route or self.route[-1] != gate_name:
             self.route.append(gate_name)
-            
-        self.last_update = datetime.now()
+        
         return True
 
     def finalize(self):
@@ -188,21 +241,65 @@ class ReportGenerator:
         """
         self.config = config
         self.records: List[List] = []
+        
+        # Video zaman damgası için metadata
+        self.fps: float = 30.0
+        self.vid_stride: int = 1
+        self.video_start_time: Optional[datetime] = None
+    
+    def set_video_metadata(self, fps: float, vid_stride: int, video_path: str) -> None:
+        """
+        Video metadata'sını ayarlar. ffprobe ile başlangıç zamanını çeker.
+        
+        Args:
+            fps: Video FPS değeri
+            vid_stride: Kare atlama adımı
+            video_path: Video dosya yolu (ffprobe için)
+        """
+        self.fps = fps
+        self.vid_stride = vid_stride
+        self.video_start_time = extract_video_start_time(video_path)
+    
+    def _frame_to_timestamp(self, frame_id: Optional[int]) -> str:
+        """
+        İşlenmiş frame numarasını gerçek zaman damgasına çevirir.
+        
+        Hesaplama: video_start_time + (frame_id * vid_stride / fps)
+        """
+        if frame_id is None:
+            return ""
+        
+        video_seconds = (frame_id * self.vid_stride) / self.fps
+        
+        if self.video_start_time:
+            actual_time = self.video_start_time + timedelta(seconds=video_seconds)
+            return actual_time.strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            # Fallback: video-göreceli zaman (HH:MM:SS)
+            hours = int(video_seconds // 3600)
+            minutes = int((video_seconds % 3600) // 60)
+            seconds = int(video_seconds % 60)
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     
     def add_route(self, route: 'VehicleRoute') -> None:
         """
         Tamamlanmış bir rota ekler.
+        Bilinmeyen çıkış kapısı olan rotalar (tek kapı teması) Excel'e kaydedilmez.
         
         Args:
             route: VehicleRoute nesnesi
         """
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        report_text = route.get_report()
+        # Çıkış kapısı belirsiz olan (tek kapıya temas edip kaybolan) araçları atla
+        if route.exit_gate is None:
+            return
+        
+        entry_time = self._frame_to_timestamp(route.entry_frame)
+        exit_time = self._frame_to_timestamp(route.exit_frame)
         route_string = route.get_route_string()
         
         record = [
-            timestamp,
-            report_text,
+            entry_time,
+            exit_time,
             route.object_id,
             route.vehicle_type,
             route.entry_gate,
@@ -283,12 +380,12 @@ class ReportGenerator:
             
             # Başlıklar
             headers = [
-                "Tarih/Saat",
-                "Olay Raporu",
+                "Giriş Zamanı",
+                "Çıkış Zamanı",
                 "ID",
                 "Tür",
-                "Giriş",
-                "Çıkış",
+                "Giriş Kapısı",
+                "Çıkış Kapısı",
                 "Tam Rota"
             ]
             ws.append(headers)
@@ -296,13 +393,14 @@ class ReportGenerator:
             # Başlık stili
             header_font = Font(bold=True)
             header_fill = PatternFill(
-                start_color="FFFF00",
-                end_color="FFFF00",
+                start_color="4472C4",
+                end_color="4472C4",
                 fill_type="solid"
             )
+            header_text = Font(bold=True, color="FFFFFF")
             
             for cell in ws[1]:
-                cell.font = header_font
+                cell.font = header_text
                 cell.fill = header_fill
             
             # Veri satırları
@@ -310,13 +408,13 @@ class ReportGenerator:
                 ws.append(record)
             
             # Sütun genişlikleri
-            ws.column_dimensions['A'].width = 20
-            ws.column_dimensions['B'].width = 60
+            ws.column_dimensions['A'].width = 22
+            ws.column_dimensions['B'].width = 22
             ws.column_dimensions['C'].width = 8
             ws.column_dimensions['D'].width = 15
-            ws.column_dimensions['E'].width = 10
-            ws.column_dimensions['F'].width = 10
-            ws.column_dimensions['G'].width = 30
+            ws.column_dimensions['E'].width = 14
+            ws.column_dimensions['F'].width = 14
+            ws.column_dimensions['G'].width = 20
             
             # Kaydet
             wb.save(self.config.excel_filename)

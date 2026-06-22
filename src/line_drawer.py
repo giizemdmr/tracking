@@ -90,12 +90,9 @@ class LineDrawer:
         if not ret:
             raise ValueError(f"Could not read frame {index} from: {self.video_path}")
         
-        # --- 1024 SCALE CORRECTION ---
-        orig_h, orig_w = frame.shape[:2]
-        target_w = 1024
-        target_h = int(orig_h * (target_w / orig_w))
-        frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
-        print(f"[*] Kare 1024 olcegine resize edildi: {orig_w}x{orig_h} -> {target_w}x{target_h}")
+        # --- ORIGINAL SCALE USE ---
+        # The frame is kept at its original dimension so drawn coordinates
+        # perfectly match the original video resolution.
         # -----------------------------
         
         return frame
@@ -283,17 +280,17 @@ class LineDrawer:
                         print("[WARNING] En az 2 nokta gerekli.")
             
             # 'z' — Mod Degistir
-            if key == ord('z'):
+            if key in [ord('z'), ord('Z')]:
                 self.draw_mode = "ZONE" if self.draw_mode == "GATE" else "GATE"
                 self.current_points = []
                 print(f"[*] Mod Degistirildi: {self.draw_mode}")
             
             # 's' — Kaydet
-            if key == ord('s'):
+            if key in [ord('s'), ord('S')]:
                 self.save_lines()
             
             # 'u' — Undo (son ciziyi geri al)
-            elif key == ord('u'):
+            elif key in [ord('u'), ord('U')]:
                 if self.draw_mode == "GATE" and self.lines:
                     removed = self.lines.pop()
                     print(f"[UNDO] '{removed['name']}' kapisi geri alindi.")
@@ -304,7 +301,7 @@ class LineDrawer:
                     print("[UNDO] Geri alinacak bir sey yok.")
             
             # 'q' — Cik
-            elif key == ord('q'):
+            elif key in [ord('q'), ord('Q')]:
                 break
 
         cv2.destroyAllWindows()

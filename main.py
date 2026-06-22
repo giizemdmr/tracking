@@ -46,12 +46,10 @@ class VideoReader(threading.Thread):
             return
         self.fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         
-        # --- 1024 SCALE INITIALIZATION ---
-        orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
-        orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
-        self.width = 1024
-        self.height = int(orig_h * (self.width / orig_w))
-        print(f"[*] Video Pipe 1024 olcegine sabitlendi: {self.width}x{self.height}")
+        # --- ORJINAL BOYUTTA KULLANIM ---
+        self.width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
+        self.height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
+        print(f"[*] Video orjinal boyutunda islenecek: {self.width}x{self.height}")
         # ----------------------------------
         
         self.total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
@@ -199,6 +197,11 @@ class ResultProcessor(threading.Thread):
         self.line_analyzer = LineAnalyzer(lines_path) if os.path.exists(lines_path) else None
         self.vehicle_tracker = VehicleTracker(self.config)
         self.report_generator = ReportGenerator(self.config)
+        
+        # Video zaman damgası metadata'sını aktar (ffprobe ile başlangıç zamanı)
+        vid_stride = getattr(self.config.pipeline, 'vid_stride', 1)
+        self.report_generator.set_video_metadata(self.fps, vid_stride, self.config.video_path)
+        
         self.routes_log = []
         
         # Yorunge (Trajectory) Hafizasi: {track_id: deque([(cx, cy), ...], maxlen=30)}
