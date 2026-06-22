@@ -6,7 +6,6 @@ import os
 import yaml
 import json
 import numpy as np
-import src.reid_patch # Monkey-patches Ultralytics ReID before YOLO loads
 from collections import deque
 from types import SimpleNamespace
 from typing import Dict, Optional, Tuple, Any

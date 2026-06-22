@@ -13,8 +13,8 @@ fuse_score: True
 gmc_method: none
 proximity_thresh: 0.5
 appearance_thresh: 0.65
-with_reid: True
-model: config/osnet_ain_x1_0_vehicle_reid_optimized.onnx
+with_reid: False
+# model: config/osnet_ain_x1_0_vehicle_reid_optimized.onnx
 
 # 2. YOLO INFERENCE PARAMETRELERI
 yolo:
@@ -36,13 +36,13 @@ tracking:
 # 4. PIPELINE DONANIM & I/O PARAMETRELERI
 pipeline:
   video_path: "D:/2026_0615_073551_006.MP4"
-  model_path: "model/best.engine"
-  #model_path: "D:/script/2026-06-09_egitim_ciktilari/0906/best.engine"
+  #model_path: "model/best.engine"
+  model_path: "D:/script/2026-06-09_egitim_ciktilari/0906/best.engine"
   #model_path: "D:/script/2026-06-04_egitim_ciktilari/best.pt"
   lines_file: "config/lines.json"
   zone_file: "config/zone.json"
   excel_filename: "okulyolu3.xlsx"
-  vid_stride: 1
+  vid_stride: 2
   queue_timeout: 5.0
   display_scale: 1.0
   headless_mode: false
