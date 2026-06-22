@@ -273,7 +273,7 @@ class ReportGenerator:
         
         if self.video_start_time:
             actual_time = self.video_start_time + timedelta(seconds=video_seconds)
-            return actual_time.strftime("%Y-%m-%d %H:%M:%S")
+            return actual_time.strftime("%H:%M:%S")
         else:
             # Fallback: video-göreceli zaman (HH:MM:SS)
             hours = int(video_seconds // 3600)
@@ -294,12 +294,10 @@ class ReportGenerator:
             return
         
         entry_time = self._frame_to_timestamp(route.entry_frame)
-        exit_time = self._frame_to_timestamp(route.exit_frame)
         route_string = route.get_route_string()
         
         record = [
             entry_time,
-            exit_time,
             route.object_id,
             route.vehicle_type,
             route.entry_gate,
@@ -327,7 +325,7 @@ class ReportGenerator:
             exit_gate: Çıkış hattı
             full_route: Tam rota listesi
         """
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now().strftime("%H:%M:%S")
         # Giris ve Cikis hatlarini al
         entry_gate = entry_gate or "Unknown"
         exit_gate = exit_gate or "Unknown"
@@ -335,7 +333,6 @@ class ReportGenerator:
 
         record = [
             timestamp,
-            f"Gecis: {entry_gate} -> {exit_gate}",
             object_id,
             vehicle_type,
             entry_gate,
@@ -380,8 +377,7 @@ class ReportGenerator:
             
             # Başlıklar
             headers = [
-                "Giriş Zamanı",
-                "Çıkış Zamanı",
+                "Zaman",
                 "ID",
                 "Tür",
                 "Giriş Kapısı",
@@ -408,13 +404,12 @@ class ReportGenerator:
                 ws.append(record)
             
             # Sütun genişlikleri
-            ws.column_dimensions['A'].width = 22
-            ws.column_dimensions['B'].width = 22
-            ws.column_dimensions['C'].width = 8
-            ws.column_dimensions['D'].width = 15
+            ws.column_dimensions['A'].width = 15
+            ws.column_dimensions['B'].width = 8
+            ws.column_dimensions['C'].width = 15
+            ws.column_dimensions['D'].width = 14
             ws.column_dimensions['E'].width = 14
-            ws.column_dimensions['F'].width = 14
-            ws.column_dimensions['G'].width = 20
+            ws.column_dimensions['F'].width = 20
             
             # Kaydet
             wb.save(self.config.excel_filename)
