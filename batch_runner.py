@@ -46,7 +46,7 @@ def main():
         
     # 2. Videolari İndir (gdown kullanarak public klasorden klasor olarak cekiyoruz)
     print(f"\n[INFO] Google Drive'dan videolar indiriliyor (Folder ID: {DRIVE_FOLDER_ID})...")
-    gdown.download_folder(id=DRIVE_FOLDER_ID, output=DOWNLOAD_DIR, quiet=False, use_cookies=False)
+    # gdown.download_folder(id=DRIVE_FOLDER_ID, output=DOWNLOAD_DIR, quiet=False, use_cookies=False)
     
     # 3. İnen Videolari Bul
     video_extensions = ["*.mp4", "*.avi", "*.mov", "*.MP4", "*.AVI", "*.MOV"]
