@@ -61,10 +61,14 @@ class LineAnalyzer:
     # ══════════════════════════════════════════════════════════
 
     def _load_gates(self, json_path: str) -> None:
-        """lines.json'dan kapı çizgilerini yükler, Shapely LineString oluşturur."""
+        """lines.json'dan kapı çizgilerini yükler, Shapely LineString veya MultiLineString oluşturur."""
+        from shapely.geometry import MultiLineString
+        
         try:
             with open(json_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+
+            temp_lines: Dict[str, List[LineString]] = {}
 
             for gate_data in data:
                 name = gate_data.get("name")
@@ -79,14 +83,27 @@ class LineAnalyzer:
                     logger.warning(f"Kapı '{name}' geçersiz geometri — atlandı.")
                     continue
 
-                self.gates[name] = line
-                self.prepared_gates[name] = prep(line)
-                self.gate_names_ordered.append(name)
+                # Aynı isimdeki çizgileri grupla
+                if name not in temp_lines:
+                    temp_lines[name] = []
+                    self.gate_names_ordered.append(name) # Sadece ilk gördüğümüzde sıraya ekle
                 
-                # Sadece baslangic ve bitis noktasini logla (aradaki durumlari es gec)
-                logger.info(f"Kapı yüklendi: '{name}' → {points[0]} ... {points[-1]} ({len(points)} nokta)")
+                temp_lines[name].append(line)
+                logger.info(f"Kapı parçası yüklendi: '{name}' → {points[0]} ... {points[-1]} ({len(points)} nokta)")
 
-            logger.info(f"Toplam {len(self.gates)} kapı başarıyla yüklendi.")
+            # Gruplanan çizgileri kaydet
+            for name, lines_list in temp_lines.items():
+                if len(lines_list) == 1:
+                    geom = lines_list[0]
+                else:
+                    # Aynı isimde birden fazla çizgi varsa birleştir
+                    geom = MultiLineString(lines_list)
+                    logger.info(f"Kapı '{name}' toplam {len(lines_list)} parçadan (MultiLineString) oluşturuldu.")
+                
+                self.gates[name] = geom
+                self.prepared_gates[name] = prep(geom)
+
+            logger.info(f"Toplam {len(self.gates)} eşsiz kapı başarıyla yüklendi.")
 
         except FileNotFoundError:
             logger.error(f"Lines JSON bulunamadı: {json_path}")

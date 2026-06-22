@@ -13,8 +13,8 @@ fuse_score: True
 gmc_method: none
 proximity_thresh: 0.5
 appearance_thresh: 0.65
-with_reid: False
-model: osnet_x0_25_msmt17.onnx
+with_reid: True
+model: config/osnet_ain_x1_0_vehicle_reid_optimized.onnx
 
 # 2. YOLO INFERENCE PARAMETRELERI
 yolo:
@@ -41,8 +41,8 @@ pipeline:
   #model_path: "D:/script/2026-06-04_egitim_ciktilari/best.pt"
   lines_file: "config/lines.json"
   zone_file: "config/zone.json"
-  excel_filename: "okulyolu2.xlsx"
-  vid_stride: 2
+  excel_filename: "okulyolu3.xlsx"
+  vid_stride: 1
   queue_timeout: 5.0
   display_scale: 1.0
   headless_mode: false
