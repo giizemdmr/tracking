@@ -23,11 +23,12 @@ def update_config(video_path: str, excel_filename: str):
     with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
         
-    config['video_path'] = video_path
-    config['reporting']['excel_filename'] = excel_filename
-    
-    # Sunucu ortaminda calisirken headless_mode'un acik olmasini garanti et
-    config['reporting']['headless_mode'] = True
+    if 'pipeline' not in config:
+        config['pipeline'] = {}
+        
+    config['pipeline']['video_path'] = video_path
+    config['pipeline']['excel_filename'] = excel_filename
+    config['pipeline']['headless_mode'] = True
     
     with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
         yaml.dump(config, f, allow_unicode=True, sort_keys=False)
