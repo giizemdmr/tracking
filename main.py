@@ -178,22 +178,19 @@ class ResultProcessor(threading.Thread):
         self.start_time = None  # İlk kare gelene kadar başlatma
         self.current_fps = 0.0
 
-        # Zone (ROI) Yukle
+        # Zone (ROI) Yukle - DEAKTIF (Kullanici istegiyle zone filtresi kullanilmiyor)
         self.zone_polygon = None
-        zone_path = self.config.pipeline.zone_file or os.path.join("config", "zone.json")
-        if os.path.exists(zone_path):
-            try:
-                with open(zone_path, 'r', encoding='utf-8') as f:
-                    zone_data = json.load(f)
-                    pts = zone_data.get("points", [])
-                    if len(pts) >= 3:
-                        self.zone_polygon = np.array(pts, np.int32)
-                        print(f"[OK] ROI (Zone) yuklendi: {zone_path}")
-            except Exception as e:
-                print(f"[ERROR] Zone yuklenemedi: {e}")
+        print("[INFO] ROI (Zone) devre disi birakildi.")
 
         # Raporlama ve Loglama (Yeni Line/Gate Mimarisi)
-        lines_path = self.config.pipeline.lines_file or os.path.join("config", "lines.json")
+        lines_path = self.config.lines_file or os.path.join("config", "lines.json")
+        if not os.path.exists(lines_path):
+            fallback_path = os.path.join("config", "lines.json")
+            if os.path.exists(fallback_path):
+                print(f"[WARNING] Vakit spesifik kapi dosyasi bulunamadi: {lines_path}. Varsayilan kapi dosyasi kullanilacak: {fallback_path}")
+                lines_path = fallback_path
+            else:
+                print(f"[WARNING] Kapi dosyasi bulunamadi: {lines_path} ve {fallback_path}")
         self.line_analyzer = LineAnalyzer(lines_path) if os.path.exists(lines_path) else None
         self.vehicle_tracker = VehicleTracker(self.config)
         self.report_generator = ReportGenerator(self.config)
@@ -211,7 +208,12 @@ class ResultProcessor(threading.Thread):
         self.line_overlay = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         self.lines_data = []  # [{"name": ..., "points": [[x1,y1],[x2,y2]]}, ...]
         
-        lines_path = self.config.pipeline.lines_file or os.path.join("config", "lines.json")
+        lines_path = self.config.lines_file or os.path.join("config", "lines.json")
+        if not os.path.exists(lines_path):
+            fallback_path = os.path.join("config", "lines.json")
+            if os.path.exists(fallback_path):
+                lines_path = fallback_path
+        
         if os.path.exists(lines_path):
             try:
                 with open(lines_path, 'r', encoding='utf-8') as f:

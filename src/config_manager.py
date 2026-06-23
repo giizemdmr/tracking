@@ -3,6 +3,33 @@ import yaml
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Tuple
 
+def get_time_of_day(video_path: Optional[str]) -> Optional[str]:
+    """
+    Videodaki zamani dosya adinin sonundaki sira numarasindan (sequence ID) ceker.
+    Orn: 2026_0615_064550_004.MP4 -> Son parca '004' -> Tamsayi degeri 4.
+    Geri donus degerleri: 'sabah', 'ogle', 'aksam'
+    """
+    if not video_path:
+        return None
+    basename = os.path.basename(video_path)
+    name, _ = os.path.splitext(basename)
+    parts = name.split('_')
+    for part in reversed(parts):
+        # 'rapor' gibi son ekleri atlamak icin sadece rakam iceren kismi temizleyip alalim
+        part_clean = ''.join(c for c in part if c.isdigit())
+        if part_clean:
+            try:
+                seq_num = int(part_clean)
+                if seq_num <= 9:
+                    return "sabah"
+                elif seq_num <= 14:
+                    return "ogle"
+                else:
+                    return "aksam"
+            except ValueError:
+                pass
+    return None
+
 @dataclass
 class YoloConfig:
     input_size: Optional[int] = None
@@ -96,7 +123,17 @@ class ConfigManager:
     def regions_file(self) -> str: return self._config.pipeline.regions_file
     
     @property
-    def lines_file(self) -> str: return self._config.pipeline.lines_file
+    def lines_file(self) -> str:
+        base_path = self._config.pipeline.lines_file or "config/lines.json"
+        video_path = self.video_path
+        time_of_day = get_time_of_day(video_path)
+        if time_of_day:
+            if time_of_day == "sabah":
+                return base_path
+            dir_name, file_name = os.path.split(base_path)
+            name, ext = os.path.splitext(file_name)
+            return os.path.join(dir_name, f"{name}_{time_of_day}{ext}").replace("\\", "/")
+        return base_path
     
     @property
     def zone_file(self) -> str: return self._config.pipeline.zone_file

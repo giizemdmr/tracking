@@ -17,13 +17,30 @@ import math
 
 def extract_video_start_time(video_path: str) -> Optional[datetime]:
     """
-    ffprobe ile video dosyasının oluşturulma zamanını çeker.
-    Önce metadata'dan, bulamazsa dosya adından parse etmeye çalışır.
-    
-    Returns:
-        datetime nesnesi veya None
+    Video baslangic zamanini ceker.
+    Once kesin olan dosya adindan parse etmeye calisir. Bulamazsa ffprobe metadata dener.
     """
-    # 1. ffprobe ile metadata'dan çek
+    # 1. Dosya adindan parse et (ornek: 2026_0615_073551_006.MP4)
+    try:
+        basename = os.path.splitext(os.path.basename(video_path))[0]
+        parts = basename.split('_')
+        # Ardarda 3 parcayi bulalim: YYYY (4 hane), MMDD (4 hane), HHMMSS (6 hane)
+        for i in range(len(parts) - 2):
+            p0, p1, p2 = parts[i], parts[i+1], parts[i+2]
+            if len(p0) == 4 and p0.isdigit() and len(p1) == 4 and p1.isdigit() and len(p2) == 6 and p2.isdigit():
+                year = int(p0)
+                month = int(p1[:2])
+                day = int(p1[2:])
+                hour = int(p2[:2])
+                minute = int(p2[2:4])
+                second = int(p2[4:])
+                dt = datetime(year, month, day, hour, minute, second)
+                print(f"[OK] Video baslangic zamani (dosya adi): {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+                return dt
+    except Exception as e:
+        print(f"[WARNING] Dosya adindan zaman parse edilemedi: {e}")
+
+    # 2. ffprobe ile metadata'dan cek (Fallback)
     try:
         result = subprocess.run(
             ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_format', video_path],
@@ -37,31 +54,22 @@ def extract_video_start_time(video_path: str) -> Optional[datetime]:
                 # ISO format: "2026-06-15T07:35:51.000000Z"
                 ct = creation_time.replace('Z', '+00:00')
                 dt = datetime.fromisoformat(ct)
-                # UTC'den yerel saate çevir (Türkiye UTC+3)
-                dt = dt + timedelta(hours=3)
-                print(f"[OK] Video başlangıç zamanı (metadata): {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+                
+                # Eger saat dilimi UTC/Z ise Turkiye saati (+3) icin 3 saat ekle
+                if dt.tzinfo is not None:
+                    if dt.utcoffset() == timedelta(0):
+                        dt = dt + timedelta(hours=3)
+                else:
+                    if 'Z' in creation_time.upper() or creation_time.endswith('+00:00'):
+                        dt = dt + timedelta(hours=3)
+                
+                dt = dt.replace(tzinfo=None)
+                print(f"[OK] Video baslangic zamani (metadata + TR saat duzeltmesi): {dt.strftime('%Y-%m-%d %H:%M:%S')}")
                 return dt
     except Exception as e:
-        print(f"[WARNING] ffprobe metadata okunamadı: {e}")
+        print(f"[WARNING] ffprobe metadata okunamadi: {e}")
     
-    # 2. Dosya adından parse et (örnek: 2026_0615_073551_006.MP4)
-    try:
-        basename = os.path.splitext(os.path.basename(video_path))[0]
-        parts = basename.split('_')
-        if len(parts) >= 3 and len(parts[0]) == 4 and len(parts[1]) == 4 and len(parts[2]) == 6:
-            year = int(parts[0])
-            month = int(parts[1][:2])
-            day = int(parts[1][2:])
-            hour = int(parts[2][:2])
-            minute = int(parts[2][2:4])
-            second = int(parts[2][4:])
-            dt = datetime(year, month, day, hour, minute, second)
-            print(f"[OK] Video başlangıç zamanı (dosya adı): {dt.strftime('%Y-%m-%d %H:%M:%S')}")
-            return dt
-    except Exception as e:
-        print(f"[WARNING] Dosya adından zaman parse edilemedi: {e}")
-    
-    print("[WARNING] Video başlangıç zamanı belirlenemedi. Video-göreceli zaman kullanılacak.")
+    print("[WARNING] Video baslangic zamani belirlenemedi. Video-goreceli zaman kullanilacak.")
     return None
 
 class VehicleRoute:
@@ -293,11 +301,23 @@ class ReportGenerator:
         if route.exit_gate is None:
             return
         
-        entry_time = self._frame_to_timestamp(route.entry_frame)
+        video_seconds = (route.entry_frame * self.vid_stride) / self.fps
+        
+        # Türkiye Saati ile başlayıp video saniyesi kadar ilerleyen tek zaman damgası
+        if self.video_start_time:
+            actual_time = self.video_start_time + timedelta(seconds=video_seconds)
+            entry_time = actual_time.strftime("%H:%M:%S")
+        else:
+            # Fallback: Video-göreceli zaman (HH:MM:SS)
+            hours = int(video_seconds // 3600)
+            minutes = int((video_seconds % 3600) // 60)
+            seconds = int(video_seconds % 60)
+            entry_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            
         route_string = route.get_route_string()
         
         record = [
-            entry_time,
+            entry_time,       # Zaman (Videonun basladigi zamandan itibaren ilerleyen zaman)
             route.object_id,
             route.vehicle_type,
             route.entry_gate,
@@ -326,7 +346,6 @@ class ReportGenerator:
             full_route: Tam rota listesi
         """
         timestamp = datetime.now().strftime("%H:%M:%S")
-        # Giris ve Cikis hatlarini al
         entry_gate = entry_gate or "Unknown"
         exit_gate = exit_gate or "Unknown"
         route_string = " -> ".join(full_route)
@@ -404,12 +423,12 @@ class ReportGenerator:
                 ws.append(record)
             
             # Sütun genişlikleri
-            ws.column_dimensions['A'].width = 15
-            ws.column_dimensions['B'].width = 8
-            ws.column_dimensions['C'].width = 15
-            ws.column_dimensions['D'].width = 14
-            ws.column_dimensions['E'].width = 14
-            ws.column_dimensions['F'].width = 20
+            ws.column_dimensions['A'].width = 15  # Zaman
+            ws.column_dimensions['B'].width = 8   # ID
+            ws.column_dimensions['C'].width = 15  # Tür
+            ws.column_dimensions['D'].width = 14  # Giriş Kapısı
+            ws.column_dimensions['E'].width = 14  # Çıkış Kapısı
+            ws.column_dimensions['F'].width = 20  # Tam Rota
             
             # Kaydet
             wb.save(self.config.excel_filename)

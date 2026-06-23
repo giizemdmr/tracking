@@ -61,12 +61,25 @@ class LineDrawer:
         try:
             from src.config_manager import config_manager
             
+            # Sync video_path with config_manager so lines_file uses the correct filename
+            if config_manager._config and config_manager._config.pipeline:
+                config_manager._config.pipeline.video_path = self.video_path
+            
             # Lines yukle
             lp = config_manager.lines_file or "config/lines.json"
             if os.path.exists(lp):
                 with open(lp, 'r', encoding='utf-8') as f:
                     self.lines = json.load(f)
-                print(f"[OK] Mevcut {len(self.lines)} kapi yuklendi.")
+                print(f"[OK] Mevcut {len(self.lines)} kapi yuklendi: {lp}")
+            else:
+                # Fallback to default lines.json as a template/starting point if specific doesn't exist
+                default_lp = "config/lines.json"
+                if os.path.exists(default_lp):
+                    with open(default_lp, 'r', encoding='utf-8') as f:
+                        self.lines = json.load(f)
+                    print(f"[INFO] Vakit spesifik kapi dosyasi bulunamadi. Varsayilan '{default_lp}' sablon olarak yuklendi.")
+                else:
+                    print(f"[INFO] Kapi dosyasi bulunamadi (yeni cizim baslatilacak).")
             
             # Zone yukle
             zp = config_manager.zone_file or "config/zone.json"
