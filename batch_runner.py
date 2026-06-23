@@ -1,4 +1,5 @@
 import os
+import sys
 import glob
 import subprocess
 import yaml
@@ -163,7 +164,7 @@ def main():
         print(f"[INFO] Pipeline (main.py) baslatiliyor...")
         try:
             # check=False yaparsaniz hata alsa bile diger videoya gecer
-            result = subprocess.run(["python3", "main.py"], check=False)
+            result = subprocess.run([sys.executable, "main.py"], check=False)
             
             if result.returncode == 0:
                 print(f"[OK] {video_name} analizi bitti! (Süre: {time.time()-start_time:.1f}sn)")
