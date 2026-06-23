@@ -4,11 +4,11 @@
 
 # 1. BOT-SORT TRACKER PARAMETRELERI (Ultralytics tarafindan kok dizinden okunur)
 tracker_type: botsort
-track_high_thresh: 0.45
+track_high_thresh: 0.30
 track_low_thresh: 0.1
 new_track_thresh: 0.50
-track_buffer: 150
-match_thresh: 0.90
+track_buffer: 250
+match_thresh: 0.80
 fuse_score: True
 gmc_method: none
 proximity_thresh: 0.5
@@ -35,9 +35,9 @@ tracking:
 
 # 4. PIPELINE DONANIM & I/O PARAMETRELERI
 pipeline:
-  video_path: "D:/2026_0615_125729_013.MP4"
-  model_path: "model/best.engine"
-  #model_path: "D:/script/2026-06-09_egitim_ciktilari/0906/best.engine"
+  video_path: "D:/20260610071843_000008.MP4"
+  #model_path: "model/best.engine"
+  model_path: "D:/script/2026-06-09_egitim_ciktilari/0906/best.engine"
   #model_path: "D:/script/2026-06-04_egitim_ciktilari/best.pt"
   lines_file: "config/lines.json"
   zone_file: "config/zone.json"
