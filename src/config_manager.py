@@ -20,9 +20,9 @@ def get_time_of_day(video_path: Optional[str]) -> Optional[str]:
         if part_clean:
             try:
                 seq_num = int(part_clean)
-                if seq_num <= 9:
+                if seq_num <= 10:
                     return "sabah"
-                elif seq_num <= 14:
+                elif seq_num <= 16:
                     return "ogle"
                 else:
                     return "aksam"
