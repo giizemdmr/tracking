@@ -125,13 +125,23 @@ class ConfigManager:
     @property
     def lines_file(self) -> str:
         base_path = self._config.pipeline.lines_file or "config/lines.json"
+        
+        # Eger lines_file config/lines.json disinda ozel bir dosya ise ve bu dosya mevcutsa,
+        # hicbir zaman-dilimi eki yapmadan dogrudan bu ozel cizgi dosyasini dondur.
+        if base_path != "config/lines.json" and os.path.exists(base_path):
+            return base_path
+            
         video_path = self.video_path
         time_of_day = get_time_of_day(video_path)
         if time_of_day:
-            if time_of_day == "sabah":
-                return base_path
             dir_name, file_name = os.path.split(base_path)
             name, ext = os.path.splitext(file_name)
+            if time_of_day == "sabah":
+                # Eger 'lines_sabah.json' gibi ozel bir dosya varsa onu kullan, yoksa ana 'lines.json'a don
+                sabah_path = os.path.join(dir_name, f"{name}_sabah{ext}").replace("\\", "/")
+                if os.path.exists(sabah_path):
+                    return sabah_path
+                return base_path
             return os.path.join(dir_name, f"{name}_{time_of_day}{ext}").replace("\\", "/")
         return base_path
     

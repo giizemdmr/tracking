@@ -30,6 +30,28 @@ def update_config(video_path: str, excel_filename: str):
     config['pipeline']['excel_filename'] = excel_filename
     config['pipeline']['headless_mode'] = True
     
+    # --- YENI: Video ile ayni klasordeki JSON cizgi dosyasini bul ---
+    video_dir = os.path.dirname(video_path)
+    local_json_files = glob.glob(os.path.join(video_dir, "*.json"))
+    
+    lines_file_to_use = "config/lines.json"  # varsayilan fallback
+    if local_json_files:
+        # Eger birden fazla varsa, adinda 'line' geceni veya ilkini sec
+        chosen_json = None
+        for jf in local_json_files:
+            if "line" in os.path.basename(jf).lower():
+                chosen_json = jf
+                break
+        if not chosen_json:
+            chosen_json = local_json_files[0]
+            
+        lines_file_to_use = chosen_json.replace("\\", "/")
+        print(f"[INFO] Video ile ayni klasorde cizgi dosyasi bulundu: {lines_file_to_use}")
+    else:
+        print(f"[INFO] Klasorde ozel cizgi dosyasi bulunamadi. Varsayilan / vakte gore cizgiler kullanilacak.")
+        
+    config['pipeline']['lines_file'] = lines_file_to_use
+    
     with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
         yaml.dump(config, f, allow_unicode=True, sort_keys=False)
         
