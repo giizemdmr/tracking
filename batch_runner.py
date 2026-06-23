@@ -45,8 +45,19 @@ def main():
         os.makedirs(OUTPUT_DIR)
         
     # 2. Videolari İndir (gdown kullanarak public klasorden klasor olarak cekiyoruz)
-    print(f"\n[INFO] Google Drive'dan videolar indiriliyor (Folder ID: {DRIVE_FOLDER_ID})...")
-    # gdown.download_folder(id=DRIVE_FOLDER_ID, output=DOWNLOAD_DIR, quiet=False, use_cookies=False)
+    video_extensions = ["*.mp4", "*.avi", "*.mov", "*.MP4", "*.AVI", "*.MOV"]
+    existing_videos = []
+    for ext in video_extensions:
+        existing_videos.extend(glob.glob(os.path.join(DOWNLOAD_DIR, "**", ext), recursive=True))
+        
+    if not existing_videos:
+        print(f"\n[INFO] '{DOWNLOAD_DIR}' bos. Google Drive'dan videolar indiriliyor (Folder ID: {DRIVE_FOLDER_ID})...")
+        try:
+            gdown.download_folder(id=DRIVE_FOLDER_ID, output=DOWNLOAD_DIR, quiet=False, use_cookies=False)
+        except Exception as e:
+            print(f"[ERROR] Google Drive indirme hatasi: {e}")
+    else:
+        print(f"\n[INFO] '{DOWNLOAD_DIR}' icinde zaten {len(existing_videos)} adet video var. Indirme atlaniyor.")
     
     # 3. İnen Videolari Bul
     video_extensions = ["*.mp4", "*.avi", "*.mov", "*.MP4", "*.AVI", "*.MOV"]
