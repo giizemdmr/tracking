@@ -118,19 +118,13 @@ def main():
     # 2. Videolari İndir (gdown kullanarak public klasorden klasor olarak cekiyoruz)
     video_extensions = ["*.mp4", "*.avi", "*.mov", "*.MP4", "*.AVI", "*.MOV"]
     existing_videos = []
-    for ext in video_extensions:
-        existing_videos.extend(glob.glob(os.path.join(DOWNLOAD_DIR, "**", ext), recursive=True))
-        
-    if not existing_videos:
-        print(f"\n[INFO] '{DOWNLOAD_DIR}' bos. Google Drive'dan videolar indiriliyor (Folder ID: {DRIVE_FOLDER_ID})...")
-        try:
-            gdown.download_folder(id=DRIVE_FOLDER_ID, output=DOWNLOAD_DIR, quiet=False, use_cookies=False)
-            # Indirme sonrasi yeni gelenleri de temizle
-            sanitize_download_filenames()
-        except Exception as e:
-            print(f"[ERROR] Google Drive indirme hatasi: {e}")
-    else:
-        print(f"\n[INFO] '{DOWNLOAD_DIR}' icinde zaten {len(existing_videos)} adet video var. Indirme atlaniyor.")
+    print(f"\n[INFO] Google Drive klasöründen videolar indiriliyor (Folder ID: {DRIVE_FOLDER_ID})...")
+    try:
+        gdown.download_folder(id=DRIVE_FOLDER_ID, output=DOWNLOAD_DIR, quiet=False, use_cookies=False)
+        # Indirme sonrasi yeni gelenleri de temizle
+        sanitize_download_filenames()
+    except Exception as e:
+        print(f"[ERROR] Google Drive indirme hatasi: {e}")
 
     # 3. İnen Videolari Bul
     video_extensions = ["*.mp4", "*.avi", "*.mov", "*.MP4", "*.AVI", "*.MOV"]
@@ -154,6 +148,11 @@ def main():
         # pipeline_config.yaml yollari relative kabul edebilir, o yuzden / ile birlestirdik
         excel_filename = excel_filename.replace("\\", "/")
         
+        # --- ZATEN ISLENMISSE ATLA ---
+        if os.path.exists(excel_filename):
+            print(f"\n[{i}/{len(videos)}] [SKIPPED] {video_name} zaten islenmis (Rapor mevcut: {excel_filename})")
+            continue
+            
         print(f"\n[{i}/{len(videos)}] Isleniyor: {video_name}")
         
         # Config'i Guncelle
