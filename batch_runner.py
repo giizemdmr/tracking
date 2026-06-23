@@ -44,6 +44,55 @@ def main():
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
         
+    def sanitize_download_filenames():
+        # --- DOSYA ADLARINI TEMIZLE (Google Drive Türkçe 'adlı dosyanın kopyası' ve 'Copy of' eklerini siler) ---
+        print("[INFO] Klasordeki dosya isimleri kontrol edilip temizleniyor...")
+        for root, dirs, files in os.walk(DOWNLOAD_DIR):
+            for filename in files:
+                filepath = os.path.join(root, filename)
+                new_filename = filename
+                
+                # Turkce/Ingilizce kopyasi takilarini temizle
+                if " adlı dosyanın kopyası" in filename:
+                    new_filename = filename.replace(" adlı dosyanın kopyası", "")
+                elif "adlı dosyanın kopyası" in filename:
+                    new_filename = filename.replace("adlı dosyanın kopyası", "")
+                elif "Copy of " in filename:
+                    new_filename = filename.replace("Copy of ", "")
+                    
+                # Eger uzanti dosya adinin ortasinda kaldiysa (ornegin .MP4.kopyasi gibi bir durum varsa veya uzantidan sonra baska karakterler geldiyse)
+                exts = [".mp4", ".avi", ".mov", ".MP4", ".AVI", ".MOV"]
+                has_ext_inside = False
+                for ext in exts:
+                    if ext in new_filename and not new_filename.endswith(ext):
+                        has_ext_inside = True
+                        break
+                
+                if has_ext_inside:
+                    for ext in exts:
+                        if ext in new_filename:
+                            idx = new_filename.find(ext)
+                            new_filename = new_filename[:idx] + ext
+                            break
+                
+                if new_filename != filename:
+                    new_filepath = os.path.join(root, new_filename)
+                    if os.path.exists(new_filepath):
+                        try:
+                            os.remove(filepath)
+                            print(f"[INFO] Mukerrer veya eski dosya silindi: {filename}")
+                        except Exception as e:
+                            print(f"[WARNING] Silme hatasi ({filename}): {e}")
+                    else:
+                        try:
+                            os.rename(filepath, new_filepath)
+                            print(f"[INFO] Dosya adi duzeltildi: {filename} -> {new_filename}")
+                        except Exception as e:
+                            print(f"[WARNING] Yeniden adlandirma hatasi ({filename}): {e}")
+
+    # Indirme kontrolunden once mevcut dosyalari temizle ki var olanlari bulabilsin
+    sanitize_download_filenames()
+
     # 2. Videolari İndir (gdown kullanarak public klasorden klasor olarak cekiyoruz)
     video_extensions = ["*.mp4", "*.avi", "*.mov", "*.MP4", "*.AVI", "*.MOV"]
     existing_videos = []
@@ -54,55 +103,12 @@ def main():
         print(f"\n[INFO] '{DOWNLOAD_DIR}' bos. Google Drive'dan videolar indiriliyor (Folder ID: {DRIVE_FOLDER_ID})...")
         try:
             gdown.download_folder(id=DRIVE_FOLDER_ID, output=DOWNLOAD_DIR, quiet=False, use_cookies=False)
+            # Indirme sonrasi yeni gelenleri de temizle
+            sanitize_download_filenames()
         except Exception as e:
             print(f"[ERROR] Google Drive indirme hatasi: {e}")
     else:
         print(f"\n[INFO] '{DOWNLOAD_DIR}' icinde zaten {len(existing_videos)} adet video var. Indirme atlaniyor.")
-    
-    # --- DOSYA ADLARINI TEMIZLE (Google Drive Türkçe 'adlı dosyanın kopyası' ve 'Copy of' eklerini siler) ---
-    print("\n[INFO] Indirilen dosya isimleri temizleniyor...")
-    for root, dirs, files in os.walk(DOWNLOAD_DIR):
-        for filename in files:
-            filepath = os.path.join(root, filename)
-            new_filename = filename
-            
-            # Turkce/Ingilizce kopyasi takilarini temizle
-            if " adlı dosyanın kopyası" in filename:
-                new_filename = filename.replace(" adlı dosyanın kopyası", "")
-            elif "adlı dosyanın kopyası" in filename:
-                new_filename = filename.replace("adlı dosyanın kopyası", "")
-            elif "Copy of " in filename:
-                new_filename = filename.replace("Copy of ", "")
-                
-            # Eger uzanti dosya adinin ortasinda kaldiysa (ornegin .MP4.kopyasi gibi bir durum varsa veya uzantidan sonra baska karakterler geldiyse)
-            exts = [".mp4", ".avi", ".mov", ".MP4", ".AVI", ".MOV"]
-            has_ext_inside = False
-            for ext in exts:
-                if ext in new_filename and not new_filename.endswith(ext):
-                    has_ext_inside = True
-                    break
-            
-            if has_ext_inside:
-                for ext in exts:
-                    if ext in new_filename:
-                        idx = new_filename.find(ext)
-                        new_filename = new_filename[:idx] + ext
-                        break
-            
-            if new_filename != filename:
-                new_filepath = os.path.join(root, new_filename)
-                if os.path.exists(new_filepath):
-                    try:
-                        os.remove(filepath)
-                        print(f"[INFO] Mukerrer veya eski dosya silindi: {filename}")
-                    except Exception as e:
-                        print(f"[WARNING] Silme hatasi ({filename}): {e}")
-                else:
-                    try:
-                        os.rename(filepath, new_filepath)
-                        print(f"[INFO] Dosya adi duzeltildi: {filename} -> {new_filename}")
-                    except Exception as e:
-                        print(f"[WARNING] Yeniden adlandirma hatasi ({filename}): {e}")
 
     # 3. İnen Videolari Bul
     video_extensions = ["*.mp4", "*.avi", "*.mov", "*.MP4", "*.AVI", "*.MOV"]
