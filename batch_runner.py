@@ -149,17 +149,69 @@ def main():
     # Indirme kontrolunden once mevcut dosyalari temizle ki var olanlari bulabilsin
     sanitize_download_filenames()
 
-    # 2. Videolari İndir (gdown kullanarak public klasorden klasor olarak cekiyoruz)
-    video_extensions = ["*.mp4", "*.avi", "*.mov", "*.MP4", "*.AVI", "*.MOV"]
-    existing_videos = []
-    for ext in video_extensions:
-        existing_videos.extend(glob.glob(os.path.join(DOWNLOAD_DIR, "**", ext), recursive=True))
-        
-    print(f"\n[INFO] Google Drive klasor kontrolu / indirme baslatiliyor (Folder ID: {DRIVE_FOLDER_ID})...")
+    # 2. Videolari İndir (gdown kullanarak public klasorden dosya listesi cekip tek tek indiriyoruz)
+    print(f"\n[INFO] Google Drive klasor kontrolu / listeleme baslatiliyor (Folder ID: {DRIVE_FOLDER_ID})...")
     try:
-        gdown.download_folder(id=DRIVE_FOLDER_ID, output=DOWNLOAD_DIR, quiet=False, use_cookies=False)
+        # Sadece listeyi çek (indirme yapma)
+        drive_files = gdown.download_folder(id=DRIVE_FOLDER_ID, output=DOWNLOAD_DIR, quiet=True, use_cookies=False, skip_download=True)
+        print(f"[INFO] Google Drive üzerinde toplam {len(drive_files)} dosya/klasör bulundu.")
+        
+        # Her dosyayı tek tek kontrol et ve indir
+        for idx, f in enumerate(drive_files, 1):
+            if not f.id: # directory ise atla
+                continue
+                
+            local_path = os.path.join(DOWNLOAD_DIR, f.path)
+            
+            # Temizlenmis dosya adini tahmin et
+            dir_name = os.path.dirname(f.path)
+            file_name = os.path.basename(f.path)
+            new_file_name = file_name
+            if " adlı dosyanın kopyası" in file_name:
+                new_file_name = file_name.replace(" adlı dosyanın kopyası", "")
+            elif "adlı dosyanın kopyası" in file_name:
+                new_file_name = file_name.replace("adlı dosyanın kopyası", "")
+            elif "Copy of " in file_name:
+                new_file_name = file_name.replace("Copy of ", "")
+                
+            exts = [".mp4", ".avi", ".mov", ".MP4", ".AVI", ".MOV", ".json", ".JSON"]
+            for ext in exts:
+                if ext in new_file_name and not new_file_name.endswith(ext):
+                    idx_ext = new_file_name.find(ext)
+                    new_file_name = new_file_name[:idx_ext] + ext
+                    break
+                    
+            sanitized_local_path = os.path.join(DOWNLOAD_DIR, dir_name, new_file_name)
+            
+            # Eger temizlenmis dosya veya orijinal dosya zaten varsa indirmeyi atla
+            if os.path.exists(sanitized_local_path) or os.path.exists(local_path):
+                # Eger temizlenmis olan var ama orijinal isim yoksa, gdown uyumu icin link olustur
+                if os.path.exists(sanitized_local_path) and not os.path.exists(local_path):
+                    try:
+                        os.link(sanitized_local_path, local_path)
+                    except:
+                        pass
+                continue
+                
+            print(f"[{idx}/{len(drive_files)}] Indiriliyor: {f.path}")
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            try:
+                gdown.download(id=f.id, output=local_path, quiet=False, use_cookies=False)
+                # Indikten sonra hemen linkini olustur
+                if not os.path.exists(sanitized_local_path):
+                    try:
+                        os.link(local_path, sanitized_local_path)
+                        print(f"[INFO] Dosya linklendi: {new_file_name}")
+                    except:
+                        try:
+                            os.rename(local_path, sanitized_local_path)
+                        except Exception as e_rename:
+                            print(f"[WARNING] Rename hatasi: {e_rename}")
+            except Exception as e_dl:
+                print(f"[ERROR] Dosya indirilemedi (Hata atlanıyor) ({f.path}): {e_dl}")
+                
     except Exception as e:
-        print(f"[ERROR] Google Drive indirme hatasi: {e}")
+        print(f"[ERROR] Google Drive klasor listeleme hatasi: {e}")
     finally:
         # Indirme sonrasi ne indiyse temizle
         sanitize_download_filenames()
