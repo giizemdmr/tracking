@@ -132,7 +132,8 @@ def main():
         
     print(f"\n[INFO] Google Drive klasor kontrolu / indirme baslatiliyor (Folder ID: {DRIVE_FOLDER_ID})...")
     try:
-        gdown.download_folder(id=DRIVE_FOLDER_ID, output=DOWNLOAD_DIR, quiet=False, use_cookies=False)
+        # gdown.download_folder(id=DRIVE_FOLDER_ID, output=DOWNLOAD_DIR, quiet=False, use_cookies=False)
+        pass
     except Exception as e:
         print(f"[ERROR] Google Drive indirme hatasi: {e}")
     finally:
