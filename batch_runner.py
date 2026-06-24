@@ -130,16 +130,14 @@ def main():
     for ext in video_extensions:
         existing_videos.extend(glob.glob(os.path.join(DOWNLOAD_DIR, "**", ext), recursive=True))
         
-    if not existing_videos:
-        print(f"\n[INFO] '{DOWNLOAD_DIR}' bos. Google Drive'dan videolar indiriliyor (Folder ID: {DRIVE_FOLDER_ID})...")
-        try:
-            gdown.download_folder(id=DRIVE_FOLDER_ID, output=DOWNLOAD_DIR, quiet=False, use_cookies=False)
-            # Indirme sonrasi yeni gelenleri de temizle
-            sanitize_download_filenames()
-        except Exception as e:
-            print(f"[ERROR] Google Drive indirme hatasi: {e}")
-    else:
-        print(f"\n[INFO] '{DOWNLOAD_DIR}' icinde zaten {len(existing_videos)} adet video var. Indirme atlaniyor.")
+    print(f"\n[INFO] Google Drive klasor kontrolu / indirme baslatiliyor (Folder ID: {DRIVE_FOLDER_ID})...")
+    try:
+        gdown.download_folder(id=DRIVE_FOLDER_ID, output=DOWNLOAD_DIR, quiet=False, use_cookies=False)
+    except Exception as e:
+        print(f"[ERROR] Google Drive indirme hatasi: {e}")
+    finally:
+        # Indirme sonrasi ne indiyse temizle
+        sanitize_download_filenames()
 
     # 3. İnen Videolari Bul
     video_extensions = ["*.mp4", "*.avi", "*.mov", "*.MP4", "*.AVI", "*.MOV"]
