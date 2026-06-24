@@ -30,9 +30,10 @@ class LineDrawer:
     """
     Video karesi uzerinde interaktif olarak 2-noktali cizgi (gate) tanimlama araci.
     """
-    def __init__(self, video_path: str, frame_index: int = 0):
+    def __init__(self, video_path: str, frame_index: int = 0, output_path: str = None):
         self.video_path = video_path
         self.frame_index = frame_index
+        self.output_path = output_path
         self.frame = self._get_specific_frame(frame_index)
         
         # State management
@@ -66,7 +67,7 @@ class LineDrawer:
                 config_manager._config.pipeline.video_path = self.video_path
             
             # Lines yukle
-            lp = config_manager.lines_file or "config/lines.json"
+            lp = self.output_path or config_manager.lines_file or "config/lines.json"
             if os.path.exists(lp):
                 with open(lp, 'r', encoding='utf-8') as f:
                     self.lines = json.load(f)
@@ -148,7 +149,7 @@ class LineDrawer:
         
         # 1. Gates (Lines) Kaydi
         if output_path is None:
-            output_path = config_manager.lines_file or "config/lines.json"
+            output_path = self.output_path or config_manager.lines_file or "config/lines.json"
         
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         try:
@@ -340,11 +341,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Interactive Virtual Line/Gate Drawing Tool")
     parser.add_argument("--video", type=str, default=default_vid, help="Path to video (config'ten cekiyor)")
     parser.add_argument("--frame", type=int, default=0, help="Frame index to start drawing from")
+    parser.add_argument("--output", type=str, default=None, help="Cizgilerin kaydedilecegi ozel dosya yolu (örn: config/lines_aksam.json)")
     args = parser.parse_args()
     
     try:
         print(f"[*] VIDEO YUKLENIYOR: {args.video}")
-        drawer = LineDrawer(args.video, args.frame)
+        drawer = LineDrawer(args.video, args.frame, args.output)
         drawer.run()
     except Exception as e:
         print(f"[CRITICAL ERROR] {e}")

@@ -20,11 +20,26 @@ def extract_video_start_time(video_path: str) -> Optional[datetime]:
     Video baslangic zamanini ceker.
     Once kesin olan dosya adindan parse etmeye calisir. Bulamazsa ffprobe metadata dener.
     """
-    # 1. Dosya adindan parse et (ornek: 2026_0615_073551_006.MP4)
+    # 1. Dosya adindan parse et
     try:
         basename = os.path.splitext(os.path.basename(video_path))[0]
         parts = basename.split('_')
-        # Ardarda 3 parcayi bulalim: YYYY (4 hane), MMDD (4 hane), HHMMSS (6 hane)
+        
+        # A. 14 haneli bitisik format kontrolü (örn: 20260612064947_000002.MP4)
+        for part in parts:
+            if len(part) == 14 and part.isdigit():
+                year = int(part[:4])
+                month = int(part[4:6])
+                day = int(part[6:8])
+                hour = int(part[8:10])
+                minute = int(part[10:12])
+                second = int(part[12:14])
+                if 2000 <= year <= 2100 and 1 <= month <= 12 and 1 <= day <= 31 and 0 <= hour <= 23 and 0 <= minute <= 59 and 0 <= second <= 59:
+                    dt = datetime(year, month, day, hour, minute, second)
+                    print(f"[OK] Video baslangic zamani (dosya adi compact): {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+                    return dt
+
+        # B. Alt çizgili parça format kontrolü (örn: 2026_0610_073922_004.MP4)
         for i in range(len(parts) - 2):
             p0, p1, p2 = parts[i], parts[i+1], parts[i+2]
             if len(p0) == 4 and p0.isdigit() and len(p1) == 4 and p1.isdigit() and len(p2) == 6 and p2.isdigit():

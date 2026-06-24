@@ -5,12 +5,25 @@ from typing import Optional, Dict, Tuple
 
 def get_time_of_day(video_path: Optional[str]) -> Optional[str]:
     """
-    Videodaki zamani dosya adinin sonundaki sira numarasindan (sequence ID) ceker.
-    Orn: 2026_0615_064550_004.MP4 -> Son parca '004' -> Tamsayi degeri 4.
+    Videodaki zamani dosya adinin sonundaki sira numarasindan (sequence ID) veya
+    bulundugu klasor isminden ceker.
     Geri donus degerleri: 'sabah', 'ogle', 'aksam'
     """
     if not video_path:
         return None
+        
+    # 1. Yol (Klasör) kontrolü: Path içerisinde 'sabah', 'ogle', 'öğle', 'aksam', 'akşam' geçiyor mu?
+    path_lower = video_path.lower().replace("\\", "/")
+    parts_in_path = path_lower.split("/")
+    for part in parts_in_path:
+        if "sabah" in part:
+            return "sabah"
+        elif "ogle" in part or "öğle" in part:
+            return "ogle"
+        elif "aksam" in part or "akşam" in part:
+            return "aksam"
+            
+    # 2. Dosya adı (Sequence ID) kontrolü:
     basename = os.path.basename(video_path)
     name, _ = os.path.splitext(basename)
     parts = name.split('_')
@@ -22,7 +35,7 @@ def get_time_of_day(video_path: Optional[str]) -> Optional[str]:
                 seq_num = int(part_clean)
                 if seq_num <= 10:
                     return "sabah"
-                elif seq_num <= 16:
+                elif seq_num <= 15:
                     return "ogle"
                 else:
                     return "aksam"
@@ -126,12 +139,40 @@ class ConfigManager:
     def lines_file(self) -> str:
         base_path = self._config.pipeline.lines_file or "config/lines.json"
         
-        # Eger lines_file config/lines.json disinda ozel bir dosya ise ve bu dosya mevcutsa,
+        # Eger lines_file config/lines.json disinda ozel bir dosya ise,
         # hicbir zaman-dilimi eki yapmadan dogrudan bu ozel cizgi dosyasini dondur.
-        if base_path != "config/lines.json" and os.path.exists(base_path):
+        if base_path != "config/lines.json":
             return base_path
             
         video_path = self.video_path
+        if video_path:
+            # 1. Öncelik: Video ile aynı klasörde bir json dosyası var mı diye bak
+            video_dir = os.path.dirname(video_path)
+            if video_dir:
+                import glob
+                local_json_files = glob.glob(os.path.join(video_dir, "*.json"))
+                # Sadece disk kök dizini (C:\, D:\ vb.) değilse veya dosya adında "line"/"gate" geçiyorsa alalım
+                is_root = not os.path.splitdrive(video_dir)[1].strip("\\/")
+                valid_files = []
+                for jf in local_json_files:
+                    jf_name = os.path.basename(jf).lower()
+                    if "line" in jf_name or "gate" in jf_name:
+                        valid_files.append(jf)
+                    elif not is_root:
+                        valid_files.append(jf)
+                
+                if valid_files:
+                    # En uygun json'ı seç (adında 'line' geçeni veya ilkini)
+                    chosen_json = None
+                    for jf in valid_files:
+                        if "line" in os.path.basename(jf).lower():
+                            chosen_json = jf
+                            break
+                    if not chosen_json:
+                        chosen_json = valid_files[0]
+                    return chosen_json.replace("\\", "/")
+
+        # 2. Öncelik: Zaman dilimine göre config klasöründen eşleştir
         time_of_day = get_time_of_day(video_path)
         if time_of_day:
             dir_name, file_name = os.path.split(base_path)
@@ -146,7 +187,31 @@ class ConfigManager:
         return base_path
     
     @property
-    def zone_file(self) -> str: return self._config.pipeline.zone_file
+    def zone_file(self) -> str:
+        base_path = self._config.pipeline.zone_file or "config/zone.json"
+        if base_path != "config/zone.json":
+            return base_path
+            
+        video_path = self.video_path
+        if video_path:
+            video_dir = os.path.dirname(video_path)
+            if video_dir:
+                import glob
+                local_json_files = glob.glob(os.path.join(video_dir, "*.json"))
+                is_root = not os.path.splitdrive(video_dir)[1].strip("\\/")
+                valid_files = []
+                for jf in local_json_files:
+                    jf_name = os.path.basename(jf).lower()
+                    if "zone" in jf_name or "roi" in jf_name:
+                        valid_files.append(jf)
+                    elif not is_root:
+                        valid_files.append(jf)
+                
+                for jf in valid_files:
+                    jf_lower = os.path.basename(jf).lower()
+                    if "zone" in jf_lower or "roi" in jf_lower:
+                        return jf.replace("\\", "/")
+        return base_path
     
     @property
     def excel_filename(self) -> str: return self._config.pipeline.excel_filename

@@ -36,19 +36,28 @@ def update_config(video_path: str, excel_filename: str):
     
     lines_file_to_use = "config/lines.json"  # varsayilan fallback
     if local_json_files:
-        # Eger birden fazla varsa, adinda 'line' geceni veya ilkini sec
-        chosen_json = None
+        is_root = not os.path.splitdrive(video_dir)[1].strip("\\/")
+        valid_files = []
         for jf in local_json_files:
-            if "line" in os.path.basename(jf).lower():
-                chosen_json = jf
-                break
-        if not chosen_json:
-            chosen_json = local_json_files[0]
-            
-        lines_file_to_use = chosen_json.replace("\\", "/")
-        print(f"[INFO] Video ile ayni klasorde cizgi dosyasi bulundu: {lines_file_to_use}")
-    else:
-        print(f"[INFO] Klasorde ozel cizgi dosyasi bulunamadi. Varsayilan / vakte gore cizgiler kullanilacak.")
+            jf_name = os.path.basename(jf).lower()
+            if "line" in jf_name or "gate" in jf_name:
+                valid_files.append(jf)
+            elif not is_root:
+                valid_files.append(jf)
+                
+        if valid_files:
+            chosen_json = None
+            for jf in valid_files:
+                if "line" in os.path.basename(jf).lower():
+                    chosen_json = jf
+                    break
+            if not chosen_json:
+                chosen_json = valid_files[0]
+                
+            lines_file_to_use = chosen_json.replace("\\", "/")
+            print(f"[INFO] Video ile ayni klasorde cizgi dosyasi bulundu: {lines_file_to_use}")
+        else:
+            print(f"[INFO] Klasorde ozel cizgi dosyasi bulunamadi. Varsayilan / vakte gore cizgiler kullanilacak.")
         
     config['pipeline']['lines_file'] = lines_file_to_use
     
