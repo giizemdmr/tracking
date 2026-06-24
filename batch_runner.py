@@ -76,8 +76,10 @@ def main():
         os.makedirs(OUTPUT_DIR)
         
     def sanitize_download_filenames():
-        # --- DOSYA ADLARINI TEMIZLE (Google Drive Türkçe 'adlı dosyanın kopyası' ve 'Copy of' eklerini siler) ---
+        # --- DOSYA ADLARINI TEMIZLE & LINKLE (Disk tasarrufu ve gdown uyumlulugu icin) ---
         print("[INFO] Klasordeki dosya isimleri kontrol edilip temizleniyor...")
+        exts = [".mp4", ".avi", ".mov", ".MP4", ".AVI", ".MOV", ".json", ".JSON"]
+        
         for root, dirs, files in os.walk(DOWNLOAD_DIR):
             for filename in files:
                 filepath = os.path.join(root, filename)
@@ -91,8 +93,7 @@ def main():
                 elif "Copy of " in filename:
                     new_filename = filename.replace("Copy of ", "")
                     
-                # Eger uzanti dosya adinin ortasinda kaldiysa (ornegin .MP4.kopyasi gibi bir durum varsa veya uzantidan sonra baska karakterler geldiyse)
-                exts = [".mp4", ".avi", ".mov", ".MP4", ".AVI", ".MOV"]
+                # Eger uzanti dosya adinin ortasinda kaldiysa
                 has_ext_inside = False
                 for ext in exts:
                     if ext in new_filename and not new_filename.endswith(ext):
@@ -108,18 +109,42 @@ def main():
                 
                 if new_filename != filename:
                     new_filepath = os.path.join(root, new_filename)
-                    if os.path.exists(new_filepath):
+                    # Orijinal dosya var ama temizlenmis dosya yoksa: linkle
+                    if os.path.exists(filepath) and not os.path.exists(new_filepath):
                         try:
-                            os.remove(filepath)
-                            print(f"[INFO] Mukerrer veya eski dosya silindi: {filename}")
+                            os.link(filepath, new_filepath)
+                            print(f"[INFO] Dosya linklendi (Hard Link): {filename} -> {new_filename}")
                         except Exception as e:
-                            print(f"[WARNING] Silme hatasi ({filename}): {e}")
-                    else:
+                            try:
+                                os.rename(filepath, new_filepath)
+                                print(f"[INFO] Dosya adi duzeltildi (Rename): {filename} -> {new_filename}")
+                            except Exception as e2:
+                                print(f"[WARNING] Dosya duzeltme hatasi: {e2}")
+
+            # Geri-link taramasi: Temizlenmis dosya var ama gdown ismi yoksa geri bagla
+            # Bu sayede gdown zaten inmis dosyalari tekrar indirmez.
+            # Tekrar okumak icin listeyi guncelle
+            updated_files = os.listdir(root) if os.path.exists(root) else []
+            for filename in updated_files:
+                filepath = os.path.join(root, filename)
+                if not os.path.isfile(filepath):
+                    continue
+                # Sadece temizlenmis dosyalar uzerinden git (adi 'kopyası' veya 'Copy' icermeyen)
+                if "kopyası" not in filename and "Copy" not in filename:
+                    drive_filename = filename
+                    # Dosya uzantisina gore ' adlı dosyanın kopyası' ekini koy
+                    for ext in exts:
+                        if filename.endswith(ext):
+                            drive_filename = filename.replace(ext, f"{ext} adlı dosyanın kopyası")
+                            break
+                    
+                    drive_filepath = os.path.join(root, drive_filename)
+                    if os.path.exists(filepath) and not os.path.exists(drive_filepath):
                         try:
-                            os.rename(filepath, new_filepath)
-                            print(f"[INFO] Dosya adi duzeltildi: {filename} -> {new_filename}")
+                            os.link(filepath, drive_filepath)
+                            print(f"[INFO] gdown uyumu icin geri-link olusturuldu (Hard Link): {filename} -> {drive_filename}")
                         except Exception as e:
-                            print(f"[WARNING] Yeniden adlandirma hatasi ({filename}): {e}")
+                            pass
 
     # Indirme kontrolunden once mevcut dosyalari temizle ki var olanlari bulabilsin
     sanitize_download_filenames()
@@ -132,8 +157,7 @@ def main():
         
     print(f"\n[INFO] Google Drive klasor kontrolu / indirme baslatiliyor (Folder ID: {DRIVE_FOLDER_ID})...")
     try:
-        # gdown.download_folder(id=DRIVE_FOLDER_ID, output=DOWNLOAD_DIR, quiet=False, use_cookies=False)
-        pass
+        gdown.download_folder(id=DRIVE_FOLDER_ID, output=DOWNLOAD_DIR, quiet=False, use_cookies=False)
     except Exception as e:
         print(f"[ERROR] Google Drive indirme hatasi: {e}")
     finally:
