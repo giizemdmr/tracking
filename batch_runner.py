@@ -221,6 +221,7 @@ def main():
     videos = []
     for ext in video_extensions:
         videos.extend(glob.glob(os.path.join(DOWNLOAD_DIR, "**", ext), recursive=True))
+    videos = sorted(list(set(videos)))
         
     if not videos:
         print("[WARNING] Işlenecek video bulunamadi!")
