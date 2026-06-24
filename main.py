@@ -191,7 +191,7 @@ class ResultProcessor(threading.Thread):
                 lines_path = fallback_path
             else:
                 print(f"[WARNING] Kapi dosyasi bulunamadi: {lines_path} ve {fallback_path}")
-        self.line_analyzer = LineAnalyzer(lines_path) if os.path.exists(lines_path) else None
+        self.line_analyzer = LineAnalyzer(lines_path, target_width=self.width, target_height=self.height) if os.path.exists(lines_path) else None
         self.vehicle_tracker = VehicleTracker(self.config)
         self.report_generator = ReportGenerator(self.config)
         

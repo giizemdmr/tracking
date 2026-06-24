@@ -37,10 +37,12 @@ class LineAnalyzer:
         - Kesişen kapının adı (str) veya None
     """
 
-    def __init__(self, lines_json_path: str = "config/lines.json"):
+    def __init__(self, lines_json_path: str = "config/lines.json", target_width: int = 1920, target_height: int = 1080):
         """
         Args:
             lines_json_path: Sanal kapı tanımlarının bulunduğu JSON dosyasının yolu.
+            target_width: Videonun orijinal genişliği (koordinatları ölçeklemek için).
+            target_height: Videonun orijinal yüksekliği (koordinatları ölçeklemek için).
         """
         # Kapı geometrileri: {name: LineString}
         self.gates: Dict[str, LineString] = {}
@@ -54,13 +56,13 @@ class LineAnalyzer:
         # İstatistikler
         self.total_crossings: int = 0
 
-        self._load_gates(lines_json_path)
+        self._load_gates(lines_json_path, target_width, target_height)
 
     # ══════════════════════════════════════════════════════════
     # KAPI YÜKLEME
     # ══════════════════════════════════════════════════════════
 
-    def _load_gates(self, json_path: str) -> None:
+    def _load_gates(self, json_path: str, target_width: int, target_height: int) -> None:
         """lines.json'dan kapı çizgilerini yükler, Shapely LineString veya MultiLineString oluşturur."""
         from shapely.geometry import MultiLineString
         
@@ -70,6 +72,23 @@ class LineAnalyzer:
 
             temp_lines: Dict[str, List[LineString]] = {}
 
+            # Ölçeklendirme Tespiti (1024x576 -> 1920x1080 vb.)
+            max_x = 0
+            max_y = 0
+            for gate_data in data:
+                pts = gate_data.get("points", [])
+                for pt in pts:
+                    if pt[0] > max_x: max_x = pt[0]
+                    if pt[1] > max_y: max_y = pt[1]
+
+            scale_x = 1.0
+            scale_y = 1.0
+            if max_x <= 1025 and max_y <= 577 and target_width > 1025:
+                scale_x = target_width / 1024.0
+                scale_y = target_height / 576.0
+                print(f"[SCALE] Sanal kapilar 1024x576 olceginden {target_width}x{target_height} olcegine olceklendiriliyor (Scale X: {scale_x:.4f}, Y: {scale_y:.4f})")
+                logger.info(f"[SCALE] Sanal kapilar 1024x576 olceginden {target_width}x{target_height} olcegine olceklendiriliyor (Scale X: {scale_x:.4f}, Y: {scale_y:.4f})")
+
             for gate_data in data:
                 name = gate_data.get("name")
                 points = gate_data.get("points")
@@ -77,6 +96,10 @@ class LineAnalyzer:
                 if not name or not points or len(points) < 2:
                     logger.warning(f"Geçersiz kapı verisi atlandı: {gate_data}")
                     continue
+
+                # Noktaları ölçeklendir
+                if scale_x != 1.0 or scale_y != 1.0:
+                    points = [[int(pt[0] * scale_x), int(pt[1] * scale_y)] for pt in points]
 
                 line = LineString(points)
                 if not line.is_valid or line.is_empty:
