@@ -16,7 +16,7 @@ def update_pipeline_model_path(model_engine_path: str):
     if 'pipeline' not in config:
         config['pipeline'] = {}
         
-    config['pipeline']['model_path'] = model_engine_path.replace("\\", "/")
+    config['pipeline']['model_path'] = str(model_engine_path).replace("\\", "/")
     
     with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
         yaml.dump(config, f, allow_unicode=True, sort_keys=False)

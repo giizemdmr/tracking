@@ -36,8 +36,7 @@ tracking:
 # 4. PIPELINE DONANIM & I/O PARAMETRELERI
 pipeline:
   video_path: "D:/2026_0610_165138_016.MP4"
-  #model_path: "model/best.engine"
-  model_path: "D:/script/2026-06-09_egitim_ciktilari/0906/best.engine"
+  model_path: "model/best.engine"
   #model_path: "D:/script/2026-06-04_egitim_ciktilari/best.pt"
   lines_file: "config/lines.json"
   zone_file: "config/zone.json"
