@@ -13,7 +13,7 @@ except ImportError:
     exit(1)
 
 # --- AYARLAR ---
-DRIVE_FOLDER_ID = "1_AUd8MJhOaIirw5Yh9qsVVUsNmj_KrOy"
+DRIVE_FOLDER_ID = "1VDKmIMwCOW_TCSIQNb16QW6ynzT2Se38"
 DOWNLOAD_DIR = "downloads"
 OUTPUT_DIR = "ciktilar"
 CONFIG_PATH = "config/pipeline_config.yaml"
