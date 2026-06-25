@@ -175,6 +175,10 @@ def main():
         # pipeline_config.yaml yollari relative kabul edebilir, o yuzden / ile birlestirdik
         excel_filename = excel_filename.replace("\\", "/")
         
+        if os.path.exists(excel_filename) and os.path.getsize(excel_filename) > 5000:
+            print(f"[INFO] {video_name} zaten islenmis, geciliyor.")
+            continue
+            
         print(f"\n[{i}/{len(videos)}] Isleniyor: {video_name}")
         
         # Config'i Guncelle
