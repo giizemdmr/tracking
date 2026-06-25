@@ -128,38 +128,30 @@ def main():
     sanitize_download_filenames()
 
     # 2. Videolari İndir (rclone kullanarak indiriyoruz)
-    video_extensions = ["*.mp4", "*.avi", "*.mov", "*.MP4", "*.AVI", "*.MOV"]
-    existing_videos = []
-    for ext in video_extensions:
-        existing_videos.extend(glob.glob(os.path.join(DOWNLOAD_DIR, "**", ext), recursive=True))
+    print(f"\n[INFO] Google Drive'daki videolar kontrol ediliyor ve eksik olanlar indiriliyor (Folder ID: {DRIVE_FOLDER_ID})...")
+    rclone_conf = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rclone.conf")
+    if not os.path.exists(rclone_conf):
+        print(f"[ERROR] '{rclone_conf}' bulunamadi! Indirme yapilamiyor.")
+        return
         
-    if not existing_videos:
-        print(f"\n[INFO] '{DOWNLOAD_DIR}' bos. Google Drive'dan videolar rclone ile indiriliyor (Folder ID: {DRIVE_FOLDER_ID})...")
-        rclone_conf = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rclone.conf")
-        if not os.path.exists(rclone_conf):
-            print(f"[ERROR] '{rclone_conf}' bulunamadi! Indirme yapilamiyor.")
-            return
-            
-        cmd = [
-            "rclone",
-            "--config", rclone_conf,
-            "copy",
-            "drive:",
-            DOWNLOAD_DIR,
-            "--drive-root-folder-id", DRIVE_FOLDER_ID
-        ]
-        print(f"[INFO] Komut calistiriliyor: {' '.join(cmd)}")
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode == 0:
-                # Indirme sonrasi yeni gelenleri de temizle
-                sanitize_download_filenames()
-            else:
-                print(f"[ERROR] rclone indirme hatasi:\n{result.stderr}")
-        except Exception as e:
-            print(f"[ERROR] rclone calistirilirken hata olustu: {e}")
-    else:
-        print(f"\n[INFO] '{DOWNLOAD_DIR}' icinde zaten {len(existing_videos)} adet video var. Indirme atlaniyor.")
+    cmd = [
+        "rclone",
+        "--config", rclone_conf,
+        "copy",
+        "drive:",
+        DOWNLOAD_DIR,
+        "--drive-root-folder-id", DRIVE_FOLDER_ID
+    ]
+    print(f"[INFO] Komut calistiriliyor: {' '.join(cmd)}")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            # Indirme sonrasi yeni gelenleri de temizle
+            sanitize_download_filenames()
+        else:
+            print(f"[ERROR] rclone indirme hatasi:\n{result.stderr}")
+    except Exception as e:
+        print(f"[ERROR] rclone calistirilirken hata olustu: {e}")
 
     # 3. İnen Videolari Bul
     video_extensions = ["*.mp4", "*.avi", "*.mov", "*.MP4", "*.AVI", "*.MOV"]
