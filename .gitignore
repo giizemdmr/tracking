@@ -54,3 +54,6 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Secrets
+rclone.conf

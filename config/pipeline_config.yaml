@@ -1,61 +1,76 @@
-# ==========================================
-# GLOBAL PIPELINE & TRACKING CONFIGURATION
-# ==========================================
-
-# 1. BOT-SORT TRACKER PARAMETRELERI (Ultralytics tarafindan kok dizinden okunur)
 tracker_type: botsort
-track_high_thresh: 0.30
+track_high_thresh: 0.3
 track_low_thresh: 0.1
-new_track_thresh: 0.50
+new_track_thresh: 0.5
 track_buffer: 250
-match_thresh: 0.80
-fuse_score: True
+match_thresh: 0.8
+fuse_score: true
 gmc_method: none
 proximity_thresh: 0.5
 appearance_thresh: 0.65
-with_reid: False
+with_reid: false
 model: None
-
-# 2. YOLO INFERENCE PARAMETRELERI
 yolo:
   input_size: 1024
   use_half: true
   confidence_threshold: 0.25
-  nms_iou: 0.70
-
-# 3. KORUMA & O-D (ORIGIN-DESTINATION) PARAMETRELERI
+  nms_iou: 0.7
 tracking:
-  kalman_drop_height_ratio: 0.80
-  kalman_rescue_conf: 0.40
+  kalman_drop_height_ratio: 0.8
+  kalman_rescue_conf: 0.4
   stale_buffer: 150
   zone_entry_frames: 3
   zone_change_frames: 5
   min_route_zone_duration: 15
   class_vote_threshold: 0.75
-
-# 4. PIPELINE DONANIM & I/O PARAMETRELERI
 pipeline:
-  video_path: "D:/2026_0610_165138_016.MP4"
-  model_path: "model/best.engine"
-  #model_path: "D:/script/2026-06-04_egitim_ciktilari/best.pt"
-  lines_file: "config/lines.json"
-  zone_file: "config/zone.json"
-  excel_filename: "okulyolu3.xlsx"
+  video_path: "D:/2026_0616_184017_018.MP4"
+  model_path: model/best.engine
+  lines_file: config/line_aksammelet.json
+  zone_file: config/zone.json
+  excel_filename: fidangordeneme.xlsx
   vid_stride: 2
   queue_timeout: 5.0
   display_scale: 1.0
   headless_mode: false
-
-
-# 5. ARAC RENKLERI (BGR formatinda)
 colors:
-  yaya: [0, 200, 200]
-  bisiklet: [0, 255, 0]
-  motosiklet: [255, 50, 50]
-  otomobil: [50, 150, 255]
-  otobus: [255, 0, 255]
-  agir_tasit: [0, 0, 255]
-  panelvan: [255, 255, 0]
-  minibus: [0, 150, 200]
-  kamyonet: [255, 100, 0]
-  arac: [200, 200, 200]
+  yaya:
+  - 0
+  - 200
+  - 200
+  bisiklet:
+  - 0
+  - 255
+  - 0
+  motosiklet:
+  - 255
+  - 50
+  - 50
+  otomobil:
+  - 50
+  - 150
+  - 255
+  otobus:
+  - 255
+  - 0
+  - 255
+  agir_tasit:
+  - 0
+  - 0
+  - 255
+  panelvan:
+  - 255
+  - 255
+  - 0
+  minibus:
+  - 0
+  - 150
+  - 200
+  kamyonet:
+  - 255
+  - 100
+  - 0
+  arac:
+  - 200
+  - 200
+  - 200

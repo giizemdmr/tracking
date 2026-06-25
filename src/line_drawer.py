@@ -151,7 +151,9 @@ class LineDrawer:
         if output_path is None:
             output_path = self.output_path or config_manager.lines_file or "config/lines.json"
         
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        dir_name = os.path.dirname(output_path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
         try:
             with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(self.lines, f, indent=4)
@@ -162,7 +164,9 @@ class LineDrawer:
         # 2. Zone (ROI) Kaydi
         zone_path = config_manager.zone_file or "config/zone.json"
         if self.zone_data:
-            os.makedirs(os.path.dirname(zone_path), exist_ok=True)
+            zone_dir = os.path.dirname(zone_path)
+            if zone_dir:
+                os.makedirs(zone_dir, exist_ok=True)
             try:
                 with open(zone_path, 'w', encoding='utf-8') as f:
                     json.dump(self.zone_data, f, indent=4)

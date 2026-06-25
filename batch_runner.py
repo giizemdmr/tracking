@@ -1,15 +1,15 @@
 import os
+import sys
 import glob
 import subprocess
 import yaml
 import time
 import shutil
 
-# --- GDOWN KUTUPHANESI ---
-try:
-    import gdown
-except ImportError:
-    print("[ERROR] Gerekli kütüphaneler eksik. Lütfen çalıştırın: pip install gdown")
+# --- RCLONE YAPILANDIRMASI ---
+if not shutil.which("rclone"):
+    print("[ERROR] 'rclone' bulunamadi! Lutfen rclone yukleyin ve PATH ortam degiskenine ekleyin.")
+    print("Kurulum kilavuzu: https://rclone.org/downloads/")
     exit(1)
 
 # --- AYARLAR ---
@@ -34,31 +34,34 @@ def update_config(video_path: str, excel_filename: str):
     video_dir = os.path.dirname(video_path)
     local_json_files = glob.glob(os.path.join(video_dir, "*.json"))
     
-    lines_file_to_use = "config/lines.json"  # varsayilan fallback
-    if local_json_files:
-        is_root = not os.path.splitdrive(video_dir)[1].strip("\\/")
-        valid_files = []
-        for jf in local_json_files:
-            jf_name = os.path.basename(jf).lower()
-            if "line" in jf_name or "gate" in jf_name:
-                valid_files.append(jf)
-            elif not is_root:
-                valid_files.append(jf)
-                
-        if valid_files:
-            chosen_json = None
-            for jf in valid_files:
-                if "line" in os.path.basename(jf).lower():
-                    chosen_json = jf
-                    break
-            if not chosen_json:
-                chosen_json = valid_files[0]
-                
-            lines_file_to_use = chosen_json.replace("\\", "/")
-            print(f"[INFO] Video ile ayni klasorde cizgi dosyasi bulundu: {lines_file_to_use}")
-        else:
-            print(f"[INFO] Klasorde ozel cizgi dosyasi bulunamadi. Varsayilan / vakte gore cizgiler kullanilacak.")
+    if not local_json_files:
+        print(f"\n[ERROR] '{video_dir}' klasorunde video ile iliskili hicbir cizgi tanim (.json) dosyasi bulunamadi!")
+        print("Lutfen video klasorunun icine cizgi tanim dosyasini ekleyin.")
+        sys.exit(1)
         
+    is_root = not os.path.splitdrive(video_dir)[1].strip("\\/")
+    valid_files = []
+    for jf in local_json_files:
+        jf_name = os.path.basename(jf).lower()
+        if "line" in jf_name or "gate" in jf_name:
+            valid_files.append(jf)
+        elif not is_root:
+            valid_files.append(jf)
+            
+    if not valid_files:
+        print(f"\n[ERROR] '{video_dir}' klasorunde gecerli bir cizgi tanim (.json) dosyasi bulunamadi!")
+        sys.exit(1)
+        
+    chosen_json = None
+    for jf in valid_files:
+        if "line" in os.path.basename(jf).lower():
+            chosen_json = jf
+            break
+    if not chosen_json:
+        chosen_json = valid_files[0]
+        
+    lines_file_to_use = chosen_json.replace("\\", "/")
+    print(f"[INFO] Video ile ayni klasorde cizgi dosyasi bulundu: {lines_file_to_use}")
     config['pipeline']['lines_file'] = lines_file_to_use
     
     with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
@@ -124,20 +127,37 @@ def main():
     # Indirme kontrolunden once mevcut dosyalari temizle ki var olanlari bulabilsin
     sanitize_download_filenames()
 
-    # 2. Videolari İndir (gdown kullanarak public klasorden klasor olarak cekiyoruz)
+    # 2. Videolari İndir (rclone kullanarak indiriyoruz)
     video_extensions = ["*.mp4", "*.avi", "*.mov", "*.MP4", "*.AVI", "*.MOV"]
     existing_videos = []
     for ext in video_extensions:
         existing_videos.extend(glob.glob(os.path.join(DOWNLOAD_DIR, "**", ext), recursive=True))
         
     if not existing_videos:
-        print(f"\n[INFO] '{DOWNLOAD_DIR}' bos. Google Drive'dan videolar indiriliyor (Folder ID: {DRIVE_FOLDER_ID})...")
+        print(f"\n[INFO] '{DOWNLOAD_DIR}' bos. Google Drive'dan videolar rclone ile indiriliyor (Folder ID: {DRIVE_FOLDER_ID})...")
+        rclone_conf = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rclone.conf")
+        if not os.path.exists(rclone_conf):
+            print(f"[ERROR] '{rclone_conf}' bulunamadi! Indirme yapilamiyor.")
+            return
+            
+        cmd = [
+            "rclone",
+            "--config", rclone_conf,
+            "copy",
+            "drive:",
+            DOWNLOAD_DIR,
+            "--drive-root-folder-id", DRIVE_FOLDER_ID
+        ]
+        print(f"[INFO] Komut calistiriliyor: {' '.join(cmd)}")
         try:
-            gdown.download_folder(id=DRIVE_FOLDER_ID, output=DOWNLOAD_DIR, quiet=False, use_cookies=False)
-            # Indirme sonrasi yeni gelenleri de temizle
-            sanitize_download_filenames()
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                # Indirme sonrasi yeni gelenleri de temizle
+                sanitize_download_filenames()
+            else:
+                print(f"[ERROR] rclone indirme hatasi:\n{result.stderr}")
         except Exception as e:
-            print(f"[ERROR] Google Drive indirme hatasi: {e}")
+            print(f"[ERROR] rclone calistirilirken hata olustu: {e}")
     else:
         print(f"\n[INFO] '{DOWNLOAD_DIR}' icinde zaten {len(existing_videos)} adet video var. Indirme atlaniyor.")
 
@@ -173,7 +193,7 @@ def main():
         print(f"[INFO] Pipeline (main.py) baslatiliyor...")
         try:
             # check=False yaparsaniz hata alsa bile diger videoya gecer
-            result = subprocess.run(["python", "main.py"], check=False)
+            result = subprocess.run([sys.executable, "main.py"], check=False)
             
             if result.returncode == 0:
                 print(f"[OK] {video_name} analizi bitti! (Süre: {time.time()-start_time:.1f}sn)")
