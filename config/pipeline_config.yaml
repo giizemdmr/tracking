@@ -24,9 +24,9 @@ tracking:
   min_route_zone_duration: 15
   class_vote_threshold: 0.75
 pipeline:
-  video_path: "D:/2026_0616_184017_018.MP4"
+  video_path: "D:/2026_0616_182034_018.MP4"
   model_path: model/best.engine
-  lines_file: config/line_aksammelet.json
+  lines_file: config/line_sabahkumbasi.json
   zone_file: config/zone.json
   excel_filename: fidangordeneme.xlsx
   vid_stride: 2
