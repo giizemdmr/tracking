@@ -144,6 +144,11 @@ class VehicleRoute:
                     self.exit_gate = gate
                     break
         
+        # Tek gate teması: araç sadece bir kapıdan geçip kaybolmuş.
+        # exit_gate'i entry_gate ile aynı yap ki kayıt silinmesin.
+        if self.exit_gate is None and self.entry_gate is not None:
+            self.exit_gate = self.entry_gate
+        
         self.is_completed = True
 
     def get_report(self) -> str:
@@ -307,13 +312,13 @@ class ReportGenerator:
     def add_route(self, route: 'VehicleRoute') -> None:
         """
         Tamamlanmış bir rota ekler.
-        Bilinmeyen çıkış kapısı olan rotalar (tek kapı teması) Excel'e kaydedilmez.
+        entry_gate'i olmayan (hiç gate'e temas etmemiş) araçlar atlanır.
         
         Args:
             route: VehicleRoute nesnesi
         """
-        # Çıkış kapısı belirsiz olan (tek kapıya temas edip kaybolan) araçları atla
-        if route.exit_gate is None:
+        # Hiç gate teması olmayan araçları atla (gate koordinatlarına hiç ulaşamamış)
+        if route.entry_gate is None:
             return
         
         video_seconds = (route.entry_frame * self.vid_stride) / self.fps
