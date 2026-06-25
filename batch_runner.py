@@ -13,7 +13,7 @@ if not shutil.which("rclone"):
     exit(1)
 
 # --- AYARLAR ---
-DRIVE_FOLDER_ID = "1mSsNBzPQH2buSVKy2-vE2GGbn_p4yhBx"
+DRIVE_FOLDER_ID = "1VuWPYerY45giN3IHzAh2gqv7IKnKn3sx"
 DOWNLOAD_DIR = "downloads"
 OUTPUT_DIR = "ciktilar"
 CONFIG_PATH = "config/pipeline_config.yaml"
