@@ -321,6 +321,10 @@ class ReportGenerator:
         if route.entry_gate is None:
             return
         
+        # Tek kapı teması: Giriş ve çıkış aynı kapı ise gerçek geçiş değil, sayma
+        if route.entry_gate == route.exit_gate:
+            return
+        
         video_seconds = (route.entry_frame * self.vid_stride) / self.fps
         
         # Türkiye Saati ile başlayıp video saniyesi kadar ilerleyen tek zaman damgası

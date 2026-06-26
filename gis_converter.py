@@ -71,28 +71,18 @@ def get_excel_duration(df):
     except Exception:
         return timedelta(minutes=15)
 
-def get_clean_time_slot_dynamic(filename, dt):
-    try:
-        df = pd.read_excel(filename)
-        duration = get_excel_duration(df)
-        start_dt = dt - duration
-    except Exception:
-        start_dt = dt - timedelta(minutes=15)
-    
-    # Round start_dt to nearest 15-minute boundary
-    minute = start_dt.minute
-    second = start_dt.second
+def round_time_to_15m(dt):
+    minute = dt.minute
+    second = dt.second
     total_minutes = minute + second / 60.0
     rounded_minute = int(15 * round(total_minutes / 15.0))
     
     if rounded_minute == 60:
-        start_dt = start_dt + timedelta(hours=1)
-        start_dt = start_dt.replace(minute=0, second=0, microsecond=0)
+        dt = dt + timedelta(hours=1)
+        dt = dt.replace(minute=0, second=0, microsecond=0)
     else:
-        start_dt = start_dt.replace(minute=rounded_minute, second=0, microsecond=0)
-        
-    end_dt = start_dt + timedelta(minutes=15)
-    return f"{start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}"
+        dt = dt.replace(minute=rounded_minute, second=0, microsecond=0)
+    return dt
 
 def adjust_merged_column_a(ws, start_row, n_sabah, n_ogle, end_row=32):
     # Column A içindeki tüm birleştirilmiş hücreleri çöz
@@ -149,6 +139,18 @@ def adjust_row_1_merge(ws, base_col, new_toplam_col):
     # Yeni genişliği merge et
     ws.merge_cells(start_row=1, start_column=base_col, end_row=1, end_column=new_toplam_col)
 
+def copy_row_style(ws, src_row, dst_row):
+    ws.row_dimensions[dst_row].height = ws.row_dimensions[src_row].height
+    for col in range(1, ws.max_column + 1):
+        cell_src = ws.cell(row=src_row, column=col)
+        cell_dst = ws.cell(row=dst_row, column=col)
+        if cell_src.has_style:
+            cell_dst.font = copy.copy(cell_src.font)
+            cell_dst.fill = copy.copy(cell_src.fill)
+            cell_dst.border = copy.copy(cell_src.border)
+            cell_dst.alignment = copy.copy(cell_src.alignment)
+            cell_dst.number_format = cell_src.number_format
+
 def main():
     print("="*60)
     print(" KAVSAK REPORT CONVERTER: Excel Birleştirme (Mersan Formatı)")
@@ -201,11 +203,14 @@ def main():
     print("[INFO] Excel dosyalarından süreler ve zaman aralıkları hesaplanıyor...")
     for f in files:
         dt = get_file_time(f)
-        slot = get_clean_time_slot_dynamic(f, dt)
+        start_dt = round_time_to_15m(dt)
+        end_dt = start_dt + timedelta(minutes=15)
+        
+        slot = f"{start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}"
         file_slots[f] = slot
         
         # Başlangıç saatine göre grupla
-        start_hour = int(slot.split(':')[0])
+        start_hour = start_dt.hour
         if start_hour < 12:
             sabah_files.append(f)
         elif start_hour < 15:
@@ -358,32 +363,32 @@ def main():
         col_mappings_by_sheet[sheet_name] = col_mappings
         total_cols_by_sheet[sheet_name] = total_cols
 
-    # 6. Akım sayfalarını ilklendir ve zaman kısımlarını yaz (Satır 3-32)
+    # 6. Akım sayfalarını ilklendir ve zaman kısımlarını yaz
     for sheet_name in akim_sheets:
         ws = wb[sheet_name]
         
-        # Sütun A birleştirilmiş alanlarını güncelle (Her zaman satır 32'ye kadar)
-        adjust_merged_column_a(ws, start_row=3, n_sabah=len(sabah_files), n_ogle=len(ogle_files), end_row=32)
+        # Dinamik satır ekleme/silme işlemi
+        if total_files < 30:
+            ws.delete_rows(last_row_akim + 1, 32 - last_row_akim)
+        elif total_files > 30:
+            ws.insert_rows(32, last_row_akim - 32)
+            for r in range(32, last_row_akim + 1):
+                copy_row_style(ws, 31, r)
         
-        # 3. satırdan 32. satıra kadar ilklendir
+        # Sütun A birleştirilmiş alanlarını güncelle
+        adjust_merged_column_a(ws, start_row=3, n_sabah=len(sabah_files), n_ogle=len(ogle_files), end_row=last_row_akim)
+        
+        # Zaman ve verileri sıfırla/ilklendir
         max_col_idx = max(col_mappings_by_sheet[sheet_name].keys()) if col_mappings_by_sheet[sheet_name] else 56
         max_tot_idx = max(total_cols_by_sheet[sheet_name].values()) if total_cols_by_sheet[sheet_name] else 56
         limit_col = max(max_col_idx, max_tot_idx)
         
-        for r in range(3, 33):
-            if r <= last_row_akim:
-                file_idx = r - 3
-                f = sorted_files[file_idx]
-                ws.cell(row=r, column=2).value = file_slots[f]
-                
-                # Verileri sıfırla
-                for c in range(3, limit_col + 1):
-                    ws.cell(row=r, column=c).value = 0
-            else:
-                # Arta kalan satırları boş zaman ve 0 veriyle doldur (Grafik uyumluluğu için)
-                ws.cell(row=r, column=2).value = ""
-                for c in range(3, limit_col + 1):
-                    ws.cell(row=r, column=c).value = 0
+        for r in range(3, last_row_akim + 1):
+            file_idx = r - 3
+            f = sorted_files[file_idx]
+            ws.cell(row=r, column=2).value = file_slots[f]
+            for c in range(3, limit_col + 1):
+                ws.cell(row=r, column=c).value = 0
 
     # 7. Rapor dosyalarını oku ve ilgili hücreleri doldur
     for idx, f in enumerate(sorted_files):
@@ -420,13 +425,13 @@ def main():
                         curr_val = ws.cell(row=r_akim, column=target_col).value or 0
                         ws.cell(row=r_akim, column=target_col).value = curr_val + 1
 
-    # 8. Tüm Akım sayfalarında satır toplamlarını hesapla (Satır 3-32)
+    # 8. Tüm Akım sayfalarında satır toplamlarını hesapla
     for sheet_name in akim_sheets:
         ws = wb[sheet_name]
         col_map = col_mappings_by_sheet[sheet_name]
         tot_map = total_cols_by_sheet[sheet_name]
         
-        for r in range(3, 33):
+        for r in range(3, last_row_akim + 1):
             for mapped_tur, total_col_idx in tot_map.items():
                 v_cols = [c for c, (v_class, _) in col_map.items() if v_class == mapped_tur]
                 row_sum = sum(ws.cell(row=r, column=c).value or 0 for c in v_cols)
@@ -441,59 +446,95 @@ def main():
     if not ozet_sheet_name:
         ozet_sheet_name = wb.sheetnames[-1]
     ws_ozet = wb[ozet_sheet_name]
+    # Sütun A birleştirilmiş alanlarını güncelle, verileri sıfırla ve doldur
+    last_row_ozet = 1 + total_files
+    total_row_ozet = last_row_ozet + 1
     
-    # Sütun A birleştirilmiş alanlarını güncelle (ÖZET için satır 2'den başlar, 31'e kadar)
-    adjust_merged_column_a(ws_ozet, start_row=2, n_sabah=len(sabah_files), n_ogle=len(ogle_files), end_row=31)
+    # Dinamik satır ekleme/silme işlemi (ÖZET)
+    if total_files < 30:
+        copy_row_style(ws_ozet, 32, total_row_ozet)
+        ws_ozet.delete_rows(total_row_ozet + 1, 32 - total_row_ozet)
+    elif total_files > 30:
+        ws_ozet.insert_rows(32, total_row_ozet - 32)
+        for r in range(32, total_row_ozet):
+            copy_row_style(ws_ozet, 31, r)
+            
+    # Sütun A birleştirilmiş alanlarını güncelle (ÖZET için satır 2'den başlar, last_row_ozet'e kadar)
+    adjust_merged_column_a(ws_ozet, start_row=2, n_sabah=len(sabah_files), n_ogle=len(ogle_files), end_row=last_row_ozet)
     
-    # Önce mevcut verileri sıfırla (Satır 2-31, Sütun 2-9)
-    for r in range(2, 32):
+    # Zaman ve verileri sıfırla/ilklendir
+    for r in range(2, last_row_ozet + 1):
         for c in range(2, 10):
             ws_ozet.cell(row=r, column=c).value = 0
 
     # Her satırı doldur
-    for r_ozet in range(2, 32):
+    for r_ozet in range(2, last_row_ozet + 1):
         r_akim = r_ozet + 1
         
         # ZAMAN bilgisini ilk akım sayfasından kopyala
         ws_ozet.cell(row=r_ozet, column=2).value = wb[akim_sheets[0]].cell(row=r_akim, column=2).value
         
-        # Sadece veri olan satırları topla
-        if r_ozet <= last_row_akim:
-            sums = {}
-            for vehicle in category_mapping.values():
-                v_sum = 0
-                for sheet_name in akim_sheets:
-                    if sheet_name in wb.sheetnames:
-                        tot_map = total_cols_by_sheet[sheet_name]
-                        if vehicle in tot_map:
-                            total_col_idx = tot_map[vehicle]
-                            v_sum += wb[sheet_name].cell(row=r_akim, column=total_col_idx).value or 0
-                sums[vehicle] = v_sum
+        # Verileri topla
+        sums = {}
+        for vehicle in category_mapping.values():
+            v_sum = 0
+            for sheet_name in akim_sheets:
+                if sheet_name in wb.sheetnames:
+                    tot_map = total_cols_by_sheet[sheet_name]
+                    if vehicle in tot_map:
+                        total_col_idx = tot_map[vehicle]
+                        v_sum += wb[sheet_name].cell(row=r_akim, column=total_col_idx).value or 0
+            sums[vehicle] = v_sum
 
-            # ÖZET sayfasına yaz
-            ws_ozet.cell(row=r_ozet, column=3).value = sums['AGIR_TASIT']
-            ws_ozet.cell(row=r_ozet, column=4).value = sums['KAMYONET']
-            ws_ozet.cell(row=r_ozet, column=5).value = sums['MINIBUS']
-            ws_ozet.cell(row=r_ozet, column=6).value = sums['OTOBUS']
-            ws_ozet.cell(row=r_ozet, column=7).value = sums['OTOMOBIL']
-            ws_ozet.cell(row=r_ozet, column=8).value = sums['PANELVAN']
-            ws_ozet.cell(row=r_ozet, column=9).value = sum(sums.values())
-        else:
-            # Boş satırlar için 0 yaz
-            for c in range(3, 10):
-                ws_ozet.cell(row=r_ozet, column=c).value = 0
+        # ÖZET sayfasına yaz
+        ws_ozet.cell(row=r_ozet, column=3).value = sums['AGIR_TASIT']
+        ws_ozet.cell(row=r_ozet, column=4).value = sums['KAMYONET']
+        ws_ozet.cell(row=r_ozet, column=5).value = sums['MINIBUS']
+        ws_ozet.cell(row=r_ozet, column=6).value = sums['OTOBUS']
+        ws_ozet.cell(row=r_ozet, column=7).value = sums['OTOMOBIL']
+        ws_ozet.cell(row=r_ozet, column=8).value = sums['PANELVAN']
+        ws_ozet.cell(row=r_ozet, column=9).value = sum(sums.values())
 
-    # GÜN SONU TOPLAMLARI (Her zaman 32. satırda kalarak grafiklerin referansını korur)
-    total_row_ozet = 32
+    # GÜN SONU TOPLAMLARI
     print(f"[*] GÜN SONU TOPLAMI hesaplanıyor (Satır {total_row_ozet})...")
     ws_ozet.cell(row=total_row_ozet, column=1).value = "GÜN SONU"
     ws_ozet.cell(row=total_row_ozet, column=2).value = "TOPLAMI"
     
     for c in range(3, 9):
-        col_sum = sum(ws_ozet.cell(row=r, column=c).value or 0 for r in range(2, 32))
+        col_sum = sum(ws_ozet.cell(row=r, column=c).value or 0 for r in range(2, last_row_ozet + 1))
         ws_ozet.cell(row=total_row_ozet, column=c).value = col_sum
         
     ws_ozet.cell(row=total_row_ozet, column=9).value = sum(ws_ozet.cell(row=total_row_ozet, column=c).value or 0 for c in range(3, 9))
+
+    # Grafiklerin Hücre Referanslarını Güncelle
+    if len(ws_ozet._charts) >= 2:
+        c0 = ws_ozet._charts[0] # Pie Chart
+        c1 = ws_ozet._charts[1] # Line Chart
+        
+        # 1. Pasta Grafiği (Pie Chart) - Toplam Satırını referans alır
+        c0.series[0].val.numRef.f = f"'{ws_ozet.title}'!$C${total_row_ozet}:$H${total_row_ozet}"
+        c0.series[0].val.numCache = None
+        
+        # Grafik veri etiketlerini temizle (Seri adını gizleyip sadece kategori ve yüzdeyi göster)
+        if c0.series[0].dLbls is not None:
+            c0.series[0].dLbls.showSerName = False
+            c0.series[0].dLbls.showVal = False
+            c0.series[0].dLbls.showCatName = True
+            c0.series[0].dLbls.showPercent = True
+        
+        # 2. Çizgi Grafiği (Line Chart) - Veri Satırlarını referans alır
+        # Kategori formülü:
+        for s in c1.series:
+            s.cat.strRef.f = f"'{ws_ozet.title}'!$B$2:$B${last_row_ozet}"
+            s.cat.strCache = None
+            
+        # Değer formülleri:
+        cols_letters = ['C', 'D', 'E', 'F', 'G', 'H']
+        for idx, s in enumerate(c1.series):
+            if idx < len(cols_letters):
+                col_letter = cols_letters[idx]
+                s.val.numRef.f = f"'{ws_ozet.title}'!${col_letter}$2:${col_letter}${last_row_ozet}"
+                s.val.numCache = None
 
     # Excel formüllerini etkin kıl
     wb.calculation.calcMode = 'auto'

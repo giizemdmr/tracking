@@ -24,15 +24,15 @@ tracking:
   min_route_zone_duration: 15
   class_vote_threshold: 0.75
 pipeline:
-  video_path: "D:/2026_0616_182034_018.MP4"
-  model_path: model/best.engine
+  video_path: "video.mp4"
+  model_path: "best.engine"
   lines_file: config/line_sabahkumbasi.json
   zone_file: config/zone.json
-  excel_filename: fidangordeneme.xlsx
+  excel_filename: vastai_test_report.xlsx
   vid_stride: 2
   queue_timeout: 5.0
   display_scale: 1.0
-  headless_mode: false
+  headless_mode: true
 colors:
   yaya:
   - 0
