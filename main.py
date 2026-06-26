@@ -502,4 +502,18 @@ def start_pipeline() -> None:
     print("\n[OK] Pipeline başarıyla tamamlandı.")
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="YOLO BOT-SORT Pipeline Runner")
+    parser.add_argument("--video", type=str, help="Override video path in config")
+    parser.add_argument("--lines", type=str, help="Override lines file path in config")
+    parser.add_argument("--excel", type=str, help="Override excel output filename in config")
+    args = parser.parse_args()
+
+    if args.video:
+        config_manager.pipeline.video_path = args.video
+    if args.lines:
+        config_manager.pipeline.lines_file = args.lines
+    if args.excel:
+        config_manager.pipeline.excel_filename = args.excel
+
     start_pipeline()
