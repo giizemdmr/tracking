@@ -106,49 +106,52 @@ class TrackerEngine(threading.Thread):
         try:
             model = YOLO(self.config.model_path, task='detect')
             
-            while not self.stop_event.is_set():
-                frame = None
+            # Kareleri sirayla ureten generator (uretec) tanimliyoruz
+            def frame_generator():
                 while not self.stop_event.is_set():
-                    try:
-                        frame = self.input_queue.get(timeout=0.1)
-                        break
-                    except queue.Empty:
-                        pass
-                
-                if frame is None or self.stop_event.is_set():
-                    if frame is not None: self.input_queue.task_done()
-                    break
-                    
-                # NMS ve Tracker parametreleri optimize sekilde (Dinamik Config uzerinden)
-                results = model.track(
-                    source=frame, 
-                    stream=True, 
-                    persist=True, 
-                    half=self.config.yolo.use_half, 
-                    verbose=False, 
-                    tracker="config/pipeline_config.yaml", 
-                    imgsz=self.config.yolo.input_size,
-                    conf=self.config.yolo.confidence_threshold,
-                    iou=self.config.yolo.nms_iou, # Kesisim (Overlap) esnekligi
-                    agnostic_nms=False # OTO, OTOBUS'u yutmasin diye class spesifik kalmali
-                )
-                
-                for result in results:
-                    if self.stop_event.is_set(): break
+                    frame = None
                     while not self.stop_event.is_set():
                         try:
-                            kalman_states = {}
-                            if hasattr(model, 'predictor') and model.predictor is not None:
-                                if hasattr(model.predictor, 'trackers') and len(model.predictor.trackers) > 0:
-                                    bt_tracker = model.predictor.trackers[0]
-                                    for t in getattr(bt_tracker, 'tracked_stracks', []) + getattr(bt_tracker, 'lost_stracks', []):
-                                        kalman_states[int(t.track_id)] = t.mean[:4].copy()
-                                        
-                            # Model isimlerini ve 8 boyutlu state tabanlarini kuyruk ile gönder
-                            self.output_queue.put((result.orig_img, result.boxes, result.names, kalman_states), timeout=0.1)
+                            frame = self.input_queue.get(timeout=0.1)
                             break
-                        except queue.Full:
+                        except queue.Empty:
                             pass
+                    
+                    if frame is None or self.stop_event.is_set():
+                        break
+                    yield frame
+
+            # model.track komutunu DONGU DISINDA sadece 1 kez cagiriyoruz.
+            # Bu sayede her karede modelin yeniden baslatilma CPU yukunden kurtuluyoruz.
+            results = model.track(
+                source=frame_generator(), 
+                stream=True, 
+                persist=True, 
+                half=self.config.yolo.use_half, 
+                verbose=False, 
+                tracker="config/pipeline_config.yaml", 
+                imgsz=self.config.yolo.input_size,
+                conf=self.config.yolo.confidence_threshold,
+                iou=self.config.yolo.nms_iou, # Kesisim (Overlap) esnekligi
+                agnostic_nms=False # OTO, OTOBUS'u yutmasin diye class spesifik kalmali
+            )
+            
+            for result in results:
+                if self.stop_event.is_set(): break
+                while not self.stop_event.is_set():
+                    try:
+                        kalman_states = {}
+                        if hasattr(model, 'predictor') and model.predictor is not None:
+                            if hasattr(model.predictor, 'trackers') and len(model.predictor.trackers) > 0:
+                                bt_tracker = model.predictor.trackers[0]
+                                for t in getattr(bt_tracker, 'tracked_stracks', []) + getattr(bt_tracker, 'lost_stracks', []):
+                                    kalman_states[int(t.track_id)] = t.mean[:4].copy()
+                                    
+                        # Model isimlerini ve 8 boyutlu state tabanlarini kuyruk ile gonder
+                        self.output_queue.put((result.orig_img, result.boxes, result.names, kalman_states), timeout=0.1)
+                        break
+                    except queue.Full:
+                        pass
                 
                 self.input_queue.task_done()
                 
